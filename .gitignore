@@ -1,0 +1,20 @@
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local build products
+build/
+dist/
+*.spec
+
+# Local secrets and application state
+.env
+.env.*
+*.log
+.notif_tray_config.json
+
+# Local planning and scratch artifacts
+NOTIFICATION_TRAY_PLAN.md
+_test_com.ps1
+test_math_script.png
