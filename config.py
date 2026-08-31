@@ -4,7 +4,7 @@ import ctypes
 import sys
 from pathlib import Path
 
-__version__ = "1.1.11"
+__version__ = "1.2.1"
 
 
 def enable_dpi_awareness() -> None:
@@ -70,7 +70,7 @@ NOTIFICATION_SOUND = str(_SOUND_FILE) if _SOUND_FILE.exists() else ""
 
 # Defaults (overridden at runtime via control panel)
 DEFAULT_POSITION = "right"   # "right" | "center" | "left"
-DEFAULT_MONITOR = 1          # 0-indexed
+DEFAULT_MONITOR = 0          # 0-indexed; index 0 is always the primary display
 
 # Custom text font for notification title/message. Empty string means
 # "use the built-in default" (Segoe UI Emoji). Set to the absolute path of

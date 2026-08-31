@@ -15,6 +15,7 @@ import threading
 import time
 from pathlib import Path
 
+import applog
 import config
 from app_utils import extract_exe_icon, find_exe_for_app
 import beeper_deeplink
@@ -64,9 +65,9 @@ def _run(manager):
             result = asyncio.run(_listen(manager))
             if result == "permanent":
                 return
-            print("[windows_listener] listener exited; restarting in 5s")
-        except Exception as exc:  # pragma: no cover - best-effort background mirror
-            print(f"[windows_listener] listener crashed; restarting in 5s: {exc}")
+            applog.get_logger().warning("listener exited; restarting in 5s")
+        except Exception:  # pragma: no cover - best-effort background mirror
+            applog.get_logger().exception("listener crashed; restarting in 5s")
         time.sleep(5)
 
 
@@ -142,13 +143,13 @@ async def _listen(manager):
             UserNotificationListenerAccessStatus,
         )
     except ImportError:
-        print("[windows_listener] winsdk not installed; native notification mirroring disabled")
+        applog.get_logger().warning("winsdk not installed; native mirroring disabled")
         return "permanent"
 
     listener = UserNotificationListener.current
     status = await listener.request_access_async()
     if status != UserNotificationListenerAccessStatus.ALLOWED:
-        print(f"[windows_listener] notification access not granted ({status}); retrying later")
+        applog.get_logger().warning("notification access not granted (%s); retrying later", status)
         return None
 
     binding_id = KnownNotificationBindings.toast_generic
@@ -200,16 +201,16 @@ async def _listen(manager):
                         deeplink = beeper_deeplink.capture_recent_deeplink()
                         if deeplink:
                             launch_url = deeplink
-                except Exception as e:
-                    print(f"[windows_listener] activation read error: {e}")
+                except Exception:
+                    applog.get_logger().exception("activation read error")
 
                 kind = _guess_kind(title, message)
                 icon_path = await _get_app_icon(n.app_info, aumid, app_name)
                 manager.notify(message or title, title=title if message else app_name, kind=kind,
                                aumid=aumid, icon_path=icon_path, app_name=app_name, launch_url=launch_url,
                                toast_tag=toast_tag)
-            except Exception as exc:
-                print(f"[windows_listener] skipped bad notification: {exc}")
+            except Exception:
+                applog.get_logger().exception("skipped bad notification")
 
         seen &= current_ids
 

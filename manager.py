@@ -8,6 +8,7 @@ import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
+import applog
 import config
 import emoji_render
 import gemini_summarizer
@@ -17,7 +18,7 @@ import sound
 import startup
 import toast_activate
 from app_utils import focus_running_app, get_exe_display_name, get_foreground_exe_stem, is_app_running
-from monitor_utils import get_monitor_rect, get_monitor_scale
+from monitor_utils import device_for_index, get_monitor_rect, get_monitor_scale, resolve_monitor_index
 from toast import Toast
 
 
@@ -37,6 +38,7 @@ class NotificationManager:
         self._countdown_job = None
         self.position = config.DEFAULT_POSITION
         self.monitor = config.DEFAULT_MONITOR
+        self.monitor_device = ""
         self.durations = {kind: config.DURATION_MS for kind in config.ICONS}
         self.accent_color = config.DEFAULT_ACCENT
         self.font_path = config.DEFAULT_FONT_PATH
@@ -62,6 +64,8 @@ class NotificationManager:
 
         self._poll_queue()
         self._tick_countdowns()
+        applog.get_logger().info("monitor index=%s device=%s rect=%s",
+                                 self.monitor, self.monitor_device, self._monitor_rect())
 
     # ------------------------------------------------------------------
     # Public API
@@ -111,8 +115,8 @@ class NotificationManager:
                 message, title, kind, aumid, icon_path, app_name, launch_url, toast_tag = self.queue.get_nowait()
                 try:
                     self._show_toast(message, title, kind, aumid, icon_path, app_name, launch_url, toast_tag)
-                except Exception as exc:
-                    print(f"[manager] dropped bad notification: {exc}")
+                except Exception:
+                    applog.get_logger().exception("dropped bad notification")
         except queue.Empty:
             pass
         finally:
@@ -285,11 +289,21 @@ class NotificationManager:
         if self.on_unread_change:
             self.on_unread_change(self.unread_count)
         self.save_history()
+
+    def _monitor_rect(self):
+        """Rect for the configured monitor, re-resolved by device name so a
+        replugged or reordered display can't leave toasts on a dead index."""
+        rect = get_monitor_rect(self.monitor)
+        if self.monitor_device and rect.device != self.monitor_device:
+            self.monitor = resolve_monitor_index(self.monitor_device)
+            rect = get_monitor_rect(self.monitor)
+        return rect
+
     def _place_off_screen(self, toast):
         """Position a brand-new toast just outside the screen edge it will
         slide in from, so the entry animation is a straight slide rather
         than a diagonal move from a fixed off-screen point."""
-        rect = get_monitor_rect(self.monitor)
+        rect = self._monitor_rect()
 
         with self.lock:
             toasts = list(self.active)
@@ -313,7 +327,7 @@ class NotificationManager:
         toast.cur_x, toast.cur_y = sx, sy
 
     def _restack(self):
-        rect = get_monitor_rect(self.monitor)
+        rect = self._monitor_rect()
 
         with self.lock:
             toasts = list(self.active)
@@ -508,7 +522,17 @@ class NotificationManager:
             return
 
         self.position = data.get("position", self.position)
-        self.monitor = data.get("monitor", self.monitor)
+        stored_device = data.get("monitor_device")
+        if isinstance(stored_device, str) and stored_device:
+            self.monitor_device = stored_device
+            self.monitor = resolve_monitor_index(stored_device)
+        else:
+            # Pre-1.2.0 configs stored a bare index taken from the arbitrary
+            # EnumDisplayMonitors order, so it can't be remapped: the same
+            # index means a different physical display run to run. Reset to
+            # primary once, and record the device name from here on.
+            self.monitor = config.DEFAULT_MONITOR
+            self.monitor_device = device_for_index(self.monitor)
         stored = data.get("durations")
         if isinstance(stored, dict):
             for kind in config.ICONS:
@@ -534,8 +558,6 @@ class NotificationManager:
 
         if self.position not in ("right", "center", "left"):
             self.position = config.DEFAULT_POSITION
-        if not isinstance(self.monitor, int) or self.monitor < 0:
-            self.monitor = config.DEFAULT_MONITOR
         if not isinstance(self.history, list):
             self.history = []
         self.history = self.history[-config.HISTORY_LIMIT:]
@@ -600,6 +622,7 @@ class NotificationManager:
                 "version": config.__version__,
                 "position": self.position,
                 "monitor": self.monitor,
+                "monitor_device": self.monitor_device,
                 "durations": dict(self.durations),
                 "accent_color": self.accent_color,
                 "font_path": self.font_path,

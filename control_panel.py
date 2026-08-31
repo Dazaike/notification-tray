@@ -6,7 +6,8 @@ from tkinter import filedialog, ttk
 
 import config
 import gemini_summarizer
-from monitor_utils import get_all_monitors, invalidate_monitor_cache, get_monitor_scale
+from monitor_utils import (device_for_index, get_all_monitors, get_monitor_scale,
+                           invalidate_monitor_cache)
 
 _FONT = ("Segoe UI", 10)
 _FONT_BOLD = ("Segoe UI", 13, "bold")
@@ -111,9 +112,11 @@ class ControlPanel:
 
         mon_frame = _lf(row1, "Monitor")
         mon_frame.pack(side="left", fill="both", expand=True, padx=(3, 0))
-        monitors = get_all_monitors()
-        for i in range(max(1, len(monitors))):
-            _rb(mon_frame, f"{i + 1}", i, self.monitor_var, self._on_monitor_change
+        # get_all_monitors() always returns at least one entry, and index 0 is
+        # always the primary — label them so a wrong pick is obvious.
+        for i, mon in enumerate(get_all_monitors()):
+            label = f"{i + 1} · {mon.width}×{mon.height}" + (" (Primary)" if mon.primary else "")
+            _rb(mon_frame, label, i, self.monitor_var, self._on_monitor_change
                 ).pack(side="left", padx=4, pady=2)
 
         # ── Row 2: Durations | Color, Opacity, Sound ────────────────────
@@ -355,9 +358,11 @@ class ControlPanel:
     def _on_monitor_change(self):
         self.manager.monitor = self.monitor_var.get()
         invalidate_monitor_cache()
+        self.manager.monitor_device = device_for_index(self.manager.monitor)
         config.apply_scale(get_monitor_scale(self.manager.monitor))
         self.manager.clear_all()
         self.manager._restack()
+
     def _on_kind_duration_change(self, kind, val):
         sec = float(val)
         self.manager.set_duration(kind, int(sec * 1000))
@@ -440,6 +445,8 @@ class ControlPanel:
     def _collect_settings(self):
         self.manager.position = self.position_var.get()
         self.manager.monitor = self.monitor_var.get()
+        self.manager.monitor_device = device_for_index(self.manager.monitor)
+
     def _on_close(self):
         self._collect_settings()
         self.manager.save_settings()

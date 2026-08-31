@@ -20,6 +20,8 @@ class MonitorRect:
     width: int
     height: int
     handle: int = 0
+    device: str = ""
+    primary: bool = False
 
 
 def _from_screeninfo():
@@ -73,9 +75,31 @@ def _from_win32():
             ctypes.c_double,
         )
 
+        class MONITORINFOEXW(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT),
+                ("dwFlags", wintypes.DWORD),
+                ("szDevice", ctypes.c_wchar * 32),
+            ]
+
+        MONITORINFOF_PRIMARY = 0x1
+
         def callback(hmonitor, hdc, rect, data):
             r = rect.contents
-            monitors.append(MonitorRect(r.left, r.top, r.right - r.left, r.bottom - r.top, int(hmonitor)))
+            device = ""
+            primary = False
+            # EnumDisplayMonitors hands back handles in an arbitrary order and
+            # tells us nothing about identity, so ask for the stable device
+            # name (\\.\DISPLAYn) and the primary flag here.
+            info = MONITORINFOEXW()
+            info.cbSize = ctypes.sizeof(MONITORINFOEXW)
+            if ctypes.windll.user32.GetMonitorInfoW(int(hmonitor), ctypes.byref(info)):
+                device = info.szDevice
+                primary = bool(info.dwFlags & MONITORINFOF_PRIMARY)
+            monitors.append(MonitorRect(r.left, r.top, r.right - r.left, r.bottom - r.top,
+                                        int(hmonitor), device, primary))
             return 1
 
         ctypes.windll.user32.EnumDisplayMonitors(0, 0, MONITORENUMPROC(callback), 0)
@@ -135,6 +159,11 @@ def get_all_monitors():
     if not monitors:
         monitors = [MonitorRect(0, 0, 1920, 1080)]
 
+    # EnumDisplayMonitors order is explicitly undefined, so a bare index is
+    # not a stable way to name a display. Sort primary-first, then
+    # left-to-right, so index 0 is always the display the user is looking at.
+    monitors.sort(key=lambda m: (not m.primary, m.x, m.y))
+
     _MONITOR_CACHE = monitors
     _MONITOR_CACHE_TIME = now
     return monitors
@@ -146,8 +175,26 @@ def get_monitor_rect(index: int) -> MonitorRect:
     if index < 0:
         index = 0
     if index >= len(monitors):
-        index = len(monitors) - 1
+        # Primary, not the last monitor: falling back to the far end of the
+        # desktop is how a stale index parks toasts on an unwatched screen.
+        index = 0
     return monitors[index]
+
+
+def device_for_index(index: int) -> str:
+    r"""Stable device name (e.g. \\.\DISPLAY2) for a monitor index, or ""."""
+    return get_monitor_rect(index).device
+
+
+def resolve_monitor_index(device: str) -> int:
+    """Index of the monitor with this device name; 0 (primary) when unknown."""
+    if not device:
+        return 0
+    for i, mon in enumerate(get_all_monitors()):
+        if mon.device == device:
+            return i
+    return 0
+
 
 def get_monitor_scale(index: int) -> float:
     """Effective scale factor (1.0 == 96 DPI) of monitor `index`."""

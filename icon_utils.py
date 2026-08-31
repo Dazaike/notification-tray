@@ -25,9 +25,12 @@ def _create_rounded_mask(size: int, radius: int) -> Image.Image:
     return mask.resize((size, size), Image.LANCZOS)
 
 
-def make_rounded_icon(icon_path: str, size: int, radius: int = 9, border_color: str = "#ffffff18"):
+def make_rounded_icon(icon_path: str, size: int, radius: int = 9):
     """Load icon_path, resize to (size, size), and clip to a smooth squircle.
-    Returns a PhotoImage, or None if unavailable."""
+    Returns a PhotoImage, or None if unavailable.
+
+    No outline is drawn: the app's own artwork is the icon, and a stroke around
+    it reads as a box floating on the card."""
     if not (icon_path and Image and ImageTk):
         return None
     try:
@@ -41,17 +44,6 @@ def make_rounded_icon(icon_path: str, size: int, radius: int = 9, border_color: 
         mask = _create_rounded_mask(size, radius)
         alpha = ImageChops.multiply(img.getchannel("A"), mask)
         img.putalpha(alpha)
-
-        # Optional subtle 1px border stroke around the icon
-        if border_color:
-            border_img = Image.new("RGBA", (size * 4, size * 4), (0, 0, 0, 0))
-            b_draw = ImageDraw.Draw(border_img)
-            r, g, b = (int(border_color.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
-            a = 32 if len(border_color.lstrip("#")) < 8 else int(border_color.lstrip("#")[6:8], 16)
-            b_draw.rounded_rectangle((0, 0, size * 4 - 1, size * 4 - 1), radius=radius * 4,
-                                     outline=(r, g, b, a), width=4)
-            border_img = border_img.resize((size, size), Image.LANCZOS)
-            img = Image.alpha_composite(img, border_img)
 
         photo = ImageTk.PhotoImage(img)
         _icon_cache[key] = photo

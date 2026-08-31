@@ -5,6 +5,7 @@ import sys
 import win32api
 import win32event
 from winerror import ERROR_ALREADY_EXISTS
+import applog
 import config
 from control_panel import ControlPanel
 from manager import NotificationManager
@@ -31,7 +32,7 @@ def _acquire_single_instance() -> bool:
 def main():
     config.enable_dpi_awareness()
     if not _acquire_single_instance():
-        print("[notification_tray] already running; exiting")
+        applog.get_logger().info("already running; exiting")
         sys.exit(0)
     manager = NotificationManager()
 

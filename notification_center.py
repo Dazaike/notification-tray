@@ -246,8 +246,7 @@ class NotificationCenter:
             self.refresh()
             self._dirty = False
 
-        from monitor_utils import get_monitor_rect
-        rect = get_monitor_rect(self.manager.monitor)
+        rect = self.manager._monitor_rect()
 
         width = config.CENTER_WIDTH
         height = min(rect.height - config.MARGIN * 2, config.CENTER_MAX_HEIGHT)

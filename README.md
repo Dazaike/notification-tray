@@ -36,14 +36,20 @@ show it again, send a test notification, or quit.
 - **Send notification** — type a message next to a kind (info/success/
   warning/error) and click Send.
 - **Position** — choose which edge of the monitor toasts slide in from.
-- **Monitor** — choose which monitor toasts appear on (unavailable monitors
-  are disabled).
+- **Monitor** — choose which monitor toasts appear on. Each option is labelled
+  with its resolution, and monitor 1 is always the primary display.
 - **Duration** — how long a toast stays before sliding out (2-15s).
 - **Demo burst** — fires 5 staggered notifications to preview stacking.
 - **History** — the last 20 notifications, most recent first.
 
 Settings (position, monitor, duration) are saved to
-`~/.notif_tray_config.json` and restored on the next launch.
+`~/.notif_tray_config.json` and restored on the next launch. The chosen monitor
+is stored by device name (`\\.\DISPLAYn`), not by index, so replugging or
+reordering displays can't move toasts onto a screen you aren't watching; an
+unrecognised device falls back to the primary display.
+
+Anything that fails in the windowless build is logged to `~/.notif_tray.log`
+(rotating, 512 KB) since a `--noconsole` executable has nowhere to print.
 
 ## Native notifications
 
