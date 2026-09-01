@@ -4,7 +4,7 @@ import ctypes
 import sys
 from pathlib import Path
 
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 
 
 def enable_dpi_awareness() -> None:
@@ -130,7 +130,7 @@ BADGE_OFFSET = 20
 PROGRESS_INSET = 14
 PROGRESS_WIDTH = 2
 PROGRESS_HEIGHT = 2
-TEXT_TO_PROGRESS_GAP = 14
+TEXT_TO_PROGRESS_GAP = 18
 PROGRESS_BOTTOM_INSET = 12
 TEXT_SIZE = 12          # Pillow size used for toast message
 MSG_SIZE = 12           # Pillow size used for toast body message
