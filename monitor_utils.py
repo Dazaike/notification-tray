@@ -108,17 +108,6 @@ def _from_win32():
         return []
 
 
-def _from_tkinter():
-    try:
-        import tkinter as tk
-        root = tk.Tk()
-        root.withdraw()
-        width = root.winfo_screenwidth()
-        height = root.winfo_screenheight()
-        root.destroy()
-        return [MonitorRect(0, 0, width, height)]
-    except Exception:
-        return []
 
 
 def invalidate_monitor_cache():
@@ -131,8 +120,8 @@ def invalidate_monitor_cache():
 def get_all_monitors():
     """Return a list of MonitorRect for every detected monitor.
 
-    Falls back through Win32 EnumDisplayMonitors -> screeninfo -> tkinter
-    single-monitor detection so this always returns at least one entry.
+    Falls back through Win32 EnumDisplayMonitors -> screeninfo -> hardcoded
+    1920x1080 fallback so this always returns at least one entry.
 
     Results are cached briefly; this is called on every toast restack, so
     we avoid repeatedly querying the (sometimes slow) display APIs.
@@ -150,12 +139,10 @@ def get_all_monitors():
 
     if sys.platform == "win32":
         monitors = _from_win32()
+        if not monitors:
+            monitors = _from_screeninfo()
     else:
         monitors = _from_screeninfo()
-    if not monitors:
-        monitors = _from_win32() if sys.platform == "win32" else _from_screeninfo()
-    if not monitors:
-        monitors = _from_tkinter()
     if not monitors:
         monitors = [MonitorRect(0, 0, 1920, 1080)]
 

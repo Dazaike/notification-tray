@@ -7,22 +7,29 @@ _FG_CACHE = ("", 0.0)
 # AUMID -> process filename stem(s) for focusing an already-running app.
 _AUMID_EXE_STEMS = {
     "anysphere.cursor": ("cursor",),
+    "com.automattic.beeper.desktop": ("beeper",),
     "com.squirrel.discord.discord": ("discord",),
     "org.equicord.equibop": ("equibop",),
     "microsoft.windowscommunicationsapps_8wekyb3d8bbwe": ("hxoutlook", "olk", "outlook"),
 }
 
 
-def find_exe_for_app(app_name: str):
+def find_exe_for_app(app_name: str, aumid: str = ""):
     """Best-effort: find the executable path of a running or installed app.
     Used as an icon fallback for win32 apps that don't expose a logo via toast API."""
-    if not app_name:
+    if not app_name and not aumid:
         return None
-    target = app_name.strip().lower()
+    target = (app_name or "").strip().lower()
+    aumid_target = (aumid or "").strip().lower()
 
     # 1. Check known AUMID stems
     for aumid_key, stems in _AUMID_EXE_STEMS.items():
-        if target in aumid_key or any(target == s or s in target for s in stems):
+        matched = False
+        if aumid_target and (aumid_target in aumid_key or aumid_key in aumid_target):
+            matched = True
+        elif target and (target in aumid_key or any(target == s or s in target for s in stems)):
+            matched = True
+        if matched:
             for stem in stems:
                 # Check running processes first
                 try:
@@ -36,6 +43,7 @@ def find_exe_for_app(app_name: str):
                     pass
 
     # 2. Check running processes via WMI
+    targets_to_check = [t for t in (target, aumid_target.split(".")[-1] if aumid_target else "") if t]
     try:
         import win32com.client
         wmi = win32com.client.GetObject("winmgmts:")
@@ -44,45 +52,111 @@ def find_exe_for_app(app_name: str):
             if not path:
                 continue
             stem = Path(path).stem.lower()
-            if stem and (stem == target or stem in target or target in stem):
-                return path
+            for t in targets_to_check:
+                if stem and (stem == t or stem in t or t in stem):
+                    return path
             display = get_exe_display_name(path).lower()
-            if display and (display == target or display in target or target in display):
-                return path
+            for t in targets_to_check:
+                if display and (display == t or display in t or t in display):
+                    return path
     except Exception:
         pass
 
     # 3. Check Windows App Paths in Registry
     try:
         import winreg
-        for hkey in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
-            for ext in ("", ".exe"):
-                try:
-                    with winreg.OpenKey(hkey, rf"Software\Microsoft\Windows\CurrentVersion\App Paths\{target}{ext}") as key:
-                        val, _ = winreg.QueryValueEx(key, "")
-                        if val and Path(val).is_file():
-                            return val
-                except OSError:
-                    pass
+        for t in targets_to_check:
+            for hkey in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+                for ext in ("", ".exe"):
+                    try:
+                        with winreg.OpenKey(hkey, rf"Software\Microsoft\Windows\CurrentVersion\App Paths\{t}{ext}") as key:
+                            val, _ = winreg.QueryValueEx(key, "")
+                            if val and Path(val).is_file():
+                                return val
+                    except OSError:
+                        pass
     except Exception:
         pass
 
     return None
 
 
+def adapt_icon_for_dark_theme(im):
+    """If an icon is dark monochrome on a transparent background, adapt its colors
+    (invert/brighten) so it is crisp and clearly visible on dark theme backgrounds."""
+    if im is None:
+        return None
+    try:
+        from PIL import Image
+
+        if im.mode != "RGBA":
+            im = im.convert("RGBA")
+
+        alpha_extrema = im.getextrema()[3]
+        # If fully opaque, icon has its own background plate/canvas
+        if alpha_extrema[0] >= 250:
+            return im
+
+        pixels = list(im.getdata())
+        visible = [px for px in pixels if px[3] > 32]
+        if not visible:
+            return im
+
+        max_lum = max(0.299 * r + 0.587 * g + 0.114 * b for r, g, b, a in visible)
+        max_sat = max(max(r, g, b) - min(r, g, b) for r, g, b, a in visible)
+
+        # If brightest pixel is dark mid-gray/black and color saturation is low,
+        # it is a dark monochrome silhouette designed for light backgrounds.
+        if max_lum < 140 and max_sat < 40:
+            new_pixels = []
+            for r, g, b, a in pixels:
+                if a <= 8:
+                    new_pixels.append((0, 0, 0, 0))
+                else:
+                    new_pixels.append((255 - r, 255 - g, 255 - b, a))
+            adapted = Image.new("RGBA", im.size)
+            adapted.putdata(new_pixels)
+            return adapted
+        return im
+    except Exception:
+        return im
+
+
 def extract_exe_icon(exe_path: str, size: int = 48):
     """Best-effort: extract the embedded icon from an .exe as a PIL Image,
     resized to (size, size). Returns None on failure."""
     try:
+        import ctypes
+        from ctypes import wintypes
         import win32gui
         import win32ui
         from PIL import Image
 
-        large, small = win32gui.ExtractIconEx(exe_path, 0, 1)
-        handles = (large or []) + (small or [])
-        if not handles:
-            return None
-        hicon = handles[0]
+        user32 = ctypes.windll.user32
+        hicons = (wintypes.HICON * 1)()
+        icon_ids = (wintypes.UINT * 1)()
+        hicon = None
+
+        # Try PrivateExtractIconsW first to get the highest resolution icon available (e.g. 256x256)
+        for target_dim in (256, 128, 64, size):
+            try:
+                res = user32.PrivateExtractIconsW(exe_path, 0, target_dim, target_dim, hicons, icon_ids, 1, 0)
+                if res > 0 and hicons[0]:
+                    hicon = hicons[0]
+                    break
+            except Exception:
+                pass
+
+        handles_to_destroy = []
+        if hicon:
+            handles_to_destroy.append(hicon)
+        else:
+            large, small = win32gui.ExtractIconEx(exe_path, 0, 1)
+            handles = (large or []) + (small or [])
+            if not handles:
+                return None
+            hicon = handles[0]
+            handles_to_destroy.extend(handles)
 
         info = win32gui.GetIconInfo(hicon)
         hbm_mask, hbm_color = info[3], info[4]
@@ -96,12 +170,22 @@ def extract_exe_icon(exe_path: str, size: int = 48):
         if img.getextrema()[3] == (0, 0):
             img.putalpha(255)
 
-        for handle in handles:
-            win32gui.DestroyIcon(handle)
-        win32gui.DeleteObject(hbm_mask)
-        win32gui.DeleteObject(hbm_color)
+        for handle in handles_to_destroy:
+            try:
+                user32.DestroyIcon(handle)
+            except Exception:
+                try:
+                    win32gui.DestroyIcon(handle)
+                except Exception:
+                    pass
+        try:
+            win32gui.DeleteObject(hbm_mask)
+            win32gui.DeleteObject(hbm_color)
+        except Exception:
+            pass
 
-        return img.resize((size, size), Image.LANCZOS)
+        resized = img.resize((size, size), Image.LANCZOS)
+        return adapt_icon_for_dark_theme(resized)
     except Exception:
         return None
 

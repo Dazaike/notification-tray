@@ -6,6 +6,9 @@ __pycache__/
 # Local build products
 build/
 dist/
+dist-electron/
+dist-ui/
+node_modules/
 *.spec
 
 # Local secrets and application state
@@ -15,6 +18,6 @@ dist/
 .notif_tray_config.json
 
 # Local planning and scratch artifacts
-NOTIFICATION_TRAY_PLAN.md
+*_PLAN.md
 _test_com.ps1
 test_math_script.png

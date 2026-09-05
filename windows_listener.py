@@ -71,6 +71,63 @@ def _run(manager):
         time.sleep(5)
 
 
+def extract_app_info(user_notification) -> tuple[str, str, any]:
+    """Safely extract (app_name, aumid, app_info_obj) without raising WinError."""
+    app_info = None
+    app_name = ""
+    aumid = ""
+    try:
+        app_info = getattr(user_notification, "app_info", None)
+    except Exception:
+        app_info = None
+
+    if app_info is not None:
+        try:
+            aumid = getattr(app_info, "app_user_model_id", "") or ""
+        except Exception:
+            aumid = ""
+        try:
+            disp = getattr(app_info, "display_info", None)
+            if disp is not None:
+                app_name = getattr(disp, "display_name", "") or ""
+        except Exception:
+            app_name = ""
+
+    if not app_name and aumid:
+        app_name = aumid.split(".")[-1].capitalize()
+
+    if not app_name:
+        app_name = "Windows"
+
+    return app_name, aumid, app_info
+
+
+def extract_texts(user_notification) -> list[str]:
+    """Safely extract visual text elements from toast notification bindings."""
+    try:
+        from winsdk.windows.ui.notifications import KnownNotificationBindings
+        binding_id = KnownNotificationBindings.toast_generic
+        binding = user_notification.notification.visual.get_binding(binding_id)
+        if binding is None:
+            v = user_notification.notification.visual
+            if getattr(v, "bindings", None) and v.bindings.size > 0:
+                binding = v.bindings.get_at(0)
+        if binding is not None:
+            elements = binding.get_text_elements()
+            if elements is not None:
+                return [elements.get_at(i).text for i in range(elements.size)]
+    except Exception:
+        pass
+    return []
+
+
+def format_notification_texts(texts: list[str], app_name: str = "Windows") -> tuple[str, str]:
+    """Derive (title, message) from extracted visual text elements."""
+    title = texts[0] if texts else (app_name or "Windows")
+    message = " — ".join(texts[1:]) if len(texts) > 1 else (texts[0] if texts else "")
+    return title, message
+
+
 async def _get_app_icon(app_info, aumid, app_name=""):
     """Best-effort fetch of the source app's logo/icon, cached to disk.
     Returns a file path, or "" if unavailable."""
@@ -80,9 +137,18 @@ async def _get_app_icon(app_info, aumid, app_name=""):
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", aumid)
     cache_path = config.ICON_CACHE_DIR / f"{safe}.png"
     if cache_path.exists():
+        try:
+            from PIL import Image
+            from app_utils import adapt_icon_for_dark_theme
+            im = Image.open(cache_path)
+            adapted = adapt_icon_for_dark_theme(im)
+            if adapted is not im:
+                adapted.save(cache_path)
+        except Exception:
+            pass
         return str(cache_path)
 
-    if app_info:
+    if app_info is not None:
         try:
             from winsdk.windows.foundation import Size
             from winsdk.windows.storage.streams import DataReader
@@ -99,21 +165,27 @@ async def _get_app_icon(app_info, aumid, app_name=""):
                     data = bytes(buf)
 
                     config.ICON_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                    with open(cache_path, "wb") as f:
-                        f.write(data)
+                    try:
+                        import io
+                        from PIL import Image
+                        from app_utils import adapt_icon_for_dark_theme
+                        im = Image.open(io.BytesIO(data))
+                        adapted = adapt_icon_for_dark_theme(im)
+                        adapted.save(cache_path)
+                    except Exception:
+                        with open(cache_path, "wb") as f:
+                            f.write(data)
                     return str(cache_path)
         except Exception:
             pass
-
     # Fall back to extracting the icon from the source app's .exe — many
     # win32 apps don't expose a logo via the toast API. WMI lookups and
     # icon extraction are blocking, so run them off the event loop.
     def _extract():
-        exe_path = find_exe_for_app(app_name)
+        exe_path = find_exe_for_app(app_name, aumid=aumid)
         if not exe_path:
             return None
         return extract_exe_icon(exe_path, 48)
-
     try:
         loop = asyncio.get_running_loop()
         # Cap the WMI / icon-extraction fallback so a stuck query can't
@@ -175,16 +247,9 @@ async def _listen(manager):
                     continue
                 seen.add(n.id)
 
-                try:
-                    binding = n.notification.visual.get_binding(binding_id)
-                    texts = [t.text for t in binding.get_text_elements()]
-                except Exception:
-                    texts = []
-
-                app_name = n.app_info.display_info.display_name if n.app_info else "Windows"
-                aumid = n.app_info.app_user_model_id if n.app_info else ""
-                title = texts[0] if texts else app_name
-                message = " — ".join(texts[1:]) if len(texts) > 1 else (texts[0] if texts else "")
+                texts = extract_texts(n)
+                app_name, aumid, app_info = extract_app_info(n)
+                title, message = format_notification_texts(texts, app_name)
 
                 if not title and not message:
                     continue
@@ -205,7 +270,10 @@ async def _listen(manager):
                     applog.get_logger().exception("activation read error")
 
                 kind = _guess_kind(title, message)
-                icon_path = await _get_app_icon(n.app_info, aumid, app_name)
+                try:
+                    icon_path = await _get_app_icon(app_info, aumid, app_name)
+                except Exception:
+                    icon_path = ""
                 manager.notify(message or title, title=title if message else app_name, kind=kind,
                                aumid=aumid, icon_path=icon_path, app_name=app_name, launch_url=launch_url,
                                toast_tag=toast_tag)

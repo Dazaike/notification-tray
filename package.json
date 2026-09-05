@@ -1,0 +1,50 @@
+{
+  "name": "notification-tray",
+  "version": "2.0.12",
+  "author": "kingm",
+  "description": "Modern Windows 11 notification tray on Electron + React + Kokonut UI + Motion",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"vite --config ui/vite.config.ts\" \"tsc -p electron && electron .\"",
+    "build:ui": "vite build --config ui/vite.config.ts",
+    "build:electron": "tsc -p electron",
+    "build:core": "pyinstaller --noconfirm --onedir --console --name core --workpath build/pyi --distpath build --add-data \"fears-to-fathom-notification.mp3;.\" core_service.py",
+    "build": "npm run build:ui && npm run build:electron && npm run build:core && electron-builder --publish never"
+  },
+  "build": {
+    "appId": "com.kingm.notificationtray",
+    "publish": null,
+    "files": [
+      "dist-electron/**",
+      "dist-ui/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/core",
+        "to": "core"
+      },
+      {
+        "from": "fears-to-fathom-notification.mp3",
+        "to": "fears-to-fathom-notification.mp3"
+      },
+      {
+        "from": "fears-to-fathom-notification.mp3",
+        "to": "core/fears-to-fathom-notification.mp3"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "concurrently": "^9.1.2",
+    "electron": "^44.2.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0"
+  }
+}

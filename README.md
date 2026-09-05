@@ -1,93 +1,76 @@
-# Windows Notification Tray
+# Windows Notification Tray (v2.0.12)
 
-A custom iOS-style notification tray for Windows. Renders animated, stacked
-toast popups on a chosen monitor (right, center, or left), with a control
-panel for sending notifications and configuring behavior.
+A modern, fluid Windows 11 notification tray built on **Electron**, **React 19**, **Tailwind CSS v4**, **Kokonut UI**, and **Motion**.
+
+The UI runs on hardware-accelerated web surfaces with liquid-glass cards, card-stack peek effects, spring physics animations, and Windows 11 Mica material. All Windows-specific capture (WinRT Action Center listener), audio playback (MCI), activation (COM/deep links), and Gemini AI summarization are handled by a headless Python core service communicating via NDJSON over standard I/O.
+
+## Architecture
+
+```
+Electron main (electron/main.ts)
+├─ Tray (bell icon with dynamic unread badge)
+├─ Child process (core_service.py / core.exe) ──NDJSON over stdio──► Python core
+├─ Overlay: Transparent, click-through, always-on-top toast stack (?surface=overlay)
+├─ Notification Center: Frameless Mica flyout history (?surface=center)
+└─ Control Panel: Frameless Mica tabbed settings window (?surface=panel)
+```
+
+## Prerequisites
+
+- Node.js 20+ (Node 24 recommended)
+- Python 3.10+
+- Windows 11 / Windows 10 (64-bit)
 
 ## Setup
 
+Install Node and Python dependencies:
+
 ```bash
+npm install
+npm install --prefix ui
 pip install -r requirements.txt
 ```
 
-## Gemini notification summaries
+## Development
 
-Use **Gemini summaries** in the control panel to enable or disable summaries,
-and enter or replace the Google AI Studio API key. The key is stored in Windows
-Credential Manager, not `~/.notif_tray_config.json`; it is masked in the panel.
-
-`GEMINI_API_KEY` remains supported for launch-time configuration and takes
-precedence over the saved key. Qualifying notifications wait up to 60 seconds
-for a one-sentence Gemini 3.5 Flash-Lite summary. If no key is available or the
-request fails, the original body is displayed instead.
-
-## Run
+Run both the Vite dev server and the Electron shell:
 
 ```bash
-python notification_tray.py
+npm run dev
 ```
 
-This opens the control panel and adds a bell icon to the system tray.
-Closing the control panel minimizes it to the tray; use the tray menu to
-show it again, send a test notification, or quit.
+Or run the Python headless core service standalone for headless testing:
 
-## Usage
+```bash
+python core_service.py
+```
 
-- **Send notification** — type a message next to a kind (info/success/
-  warning/error) and click Send.
-- **Position** — choose which edge of the monitor toasts slide in from.
-- **Monitor** — choose which monitor toasts appear on. Each option is labelled
-  with its resolution, and monitor 1 is always the primary display.
-- **Duration** — how long a toast stays before sliding out (2-15s).
-- **Demo burst** — fires 5 staggered notifications to preview stacking.
-- **History** — the last 20 notifications, most recent first.
+## Building a Standalone App
 
-Settings (position, monitor, duration) are saved to
-`~/.notif_tray_config.json` and restored on the next launch. The chosen monitor
-is stored by device name (`\\.\DISPLAYn`), not by index, so replugging or
-reordering displays can't move toasts onto a screen you aren't watching; an
-unrecognised device falls back to the primary display.
-
-Anything that fails in the windowless build is logged to `~/.notif_tray.log`
-(rotating, 512 KB) since a `--noconsole` executable has nowhere to print.
-
-## Native notifications
-
-A background thread ([windows_listener.py](windows_listener.py)) mirrors new
-Windows toast notifications (Action Center) into the tray. The first run may
-prompt for "notification access" in Windows Settings — if denied, mirroring
-is silently skipped.
-
-## Building a standalone app
-
-Package everything into a single windowless `.exe` with PyInstaller:
+Build the UI, compile TypeScript, package the Python core with PyInstaller, and generate the Windows NSIS installer and unpacked executable with Electron Builder:
 
 ```powershell
 .\build.ps1
 ```
 
-This produces `dist\NotificationTray.exe` — no Python install required to
-run it.
+Or via npm:
 
-## Running in the background at login
-
-```powershell
-.\install_startup.ps1            # add a Startup shortcut (run after build.ps1)
-.\install_startup.ps1 -Uninstall # remove it
+```bash
+npm run build
 ```
 
-After this, the app launches automatically on login with no console window —
-only the tray icon and toast popups are visible. Use the tray menu's "Quit"
-to exit.
+This generates `dist/win-unpacked/notification-tray.exe` and an NSIS installer under `dist/`.
 
-## Integration from Python
+## Features
 
-```python
-from manager import NotificationManager
-
-mgr = NotificationManager()
-mgr.notify("Deployment succeeded", title="CI/CD", kind="success")
-mgr.notify("CPU at 95%", title="System", kind="warning")
-```
-
-`notify()` is thread-safe and can be called from any thread.
+- **Liquid Glass Toasts** — Glassmorphic toast popups styled after modern Windows 11 surfaces with inset highlights and spring motion.
+- **Card-Stack Grouping** — Grouped notifications from the same app/title stack with a visual peek layer and dynamic badge counter.
+- **Countdown Progress Bar** — Accent-colored linear timer with frame-exact pause on hover and resume on mouse leave.
+- **Click-Through Transparency** — Full click-through transparency for the overlay window so desktop clicks pass through smoothly.
+- **Notification Center** — Frameless Mica drawer with sticky section headers, search filter, hold-to-clear button, and staggered animation.
+- **Control Panel** — Tabbed interface (Appearance, Animations, Behaviour, Filters, AI) with spotlight cards, live accent color swatches, opacity sliders, and Demo Burst particle animations.
+- **Directional Animations & Presets** — 16 incoming and 16 outgoing animation effects with 12 paired presets (Default, Smooth, Spring, Pop, Glass, Material, Elastic, 3D Flip, Liquid, Minimal, Dynamic, Compact) and granular physics tuning (duration, distance, bounce, blur, scale, easing).
+- **Customizable Notification Sounds** — Built-in native MCI playback supporting custom `.mp3`, `.wav`, `.wma`, `.m4a` audio files with in-app audio browsing, testing, and reset to defaults.
+- **Draggable Frameless Windows** — Native drag-and-move support on settings and notification center header bars.
+- **Gemini AI Summaries** — Optional AI summarization for notifications over 20 words. API keys are stored in the Windows Credential Manager.
+- **Deep Links & App Activation** — Clicking a notification activates the source app via COM, native toast activation, or Beeper/protocol deep links.

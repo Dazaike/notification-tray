@@ -1,45 +1,39 @@
-"""NotificationManager — owns the hidden root window, the queue, and active toasts."""
+"""NotificationManager — owns notification capture, history, persistence, and activation."""
 
 import json
 import os
 import queue
 import threading
 import time
-import tkinter as tk
+import uuid
 from datetime import datetime
 from pathlib import Path
+
 import applog
 import config
-import emoji_render
+import text_utils
 import gemini_summarizer
 import beeper_deeplink
 import launch_utils
 import sound
-import startup
 import toast_activate
 from app_utils import focus_running_app, get_exe_display_name, get_foreground_exe_stem, is_app_running
-from monitor_utils import device_for_index, get_monitor_rect, get_monitor_scale, resolve_monitor_index
-from toast import Toast
+from monitor_utils import device_for_index, get_monitor_rect, resolve_monitor_index
 
 
 class NotificationManager:
     def __init__(self):
-        self.root = tk.Tk()
-        self.root.withdraw()
-
         self.queue = queue.Queue()
-        self.active = []
         self.history = []
         self.lock = threading.RLock()
         self._save_lock = threading.Lock()
         self._persist_job = None
-        self._animating = set()
-        self._anim_job = None
-        self._countdown_job = None
+        self._shutdown_event = threading.Event()
+
         self.position = config.DEFAULT_POSITION
         self.monitor = config.DEFAULT_MONITOR
         self.monitor_device = ""
-        self.durations = {kind: config.DURATION_MS for kind in config.ICONS}
+        self.durations = {kind: config.DURATION_MS for kind in config.KINDS}
         self.accent_color = config.DEFAULT_ACCENT
         self.font_path = config.DEFAULT_FONT_PATH
         self.excluded_apps = []  # list of {"path": str, "name": str}
@@ -48,24 +42,35 @@ class NotificationManager:
         self.suppress_focused_app = True
         self.sound_enabled = True
         self._last_sound_ts = 0.0
+        self.custom_sound_path = config.DEFAULT_CUSTOM_SOUND_PATH
         self.toast_alpha = config.TOAST_ALPHA
+        self.toast_scale = config.DEFAULT_TOAST_SCALE
         self.unread_count = 0
-        self.on_unread_change = None  # optional callback(count)
         self.gemini_enabled = True
-        self.on_history_change = None  # optional callback()
-        self._load_settings()
-        config.apply_scale(get_monitor_scale(self.monitor))
-        try:
-            self.root.tk.call("tk", "scaling", 96.0 * config.SCALE / 72.0)
-        except tk.TclError:
-            pass
-        emoji_render.set_custom_font_path(self.font_path)
-        self.start_on_login = startup.is_enabled()
+        self.animation_preset = config.DEFAULT_ANIMATION_PRESET
+        self.anim_incoming = config.DEFAULT_ANIM_INCOMING
+        self.anim_outgoing = config.DEFAULT_ANIM_OUTGOING
+        self.anim_direction = config.DEFAULT_ANIM_DIRECTION
+        self.anim_duration = config.DEFAULT_ANIM_DURATION
+        self.anim_easing = config.DEFAULT_ANIM_EASING
+        self.anim_distance = config.DEFAULT_ANIM_DISTANCE
+        self.anim_bounce = config.DEFAULT_ANIM_BOUNCE
+        self.anim_blur = config.DEFAULT_ANIM_BLUR
+        self.anim_scale = config.DEFAULT_ANIM_SCALE
 
-        self._poll_queue()
-        self._tick_countdowns()
-        applog.get_logger().info("monitor index=%s device=%s rect=%s",
-                                 self.monitor, self.monitor_device, self._monitor_rect())
+        # Callbacks bound by core service
+        self.on_toast = None           # callback(entry: dict)
+        self.on_history_change = None  # callback()
+        self.on_unread_change = None   # callback(count: int)
+        self.on_settings_change = None # callback()
+
+        self._load_settings()
+
+        self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker_thread.start()
+
+        applog.get_logger().info("NotificationManager initialized, monitor index=%s device=%s",
+                                 self.monitor, self.monitor_device)
 
     # ------------------------------------------------------------------
     # Public API
@@ -74,7 +79,7 @@ class NotificationManager:
                app_name: str = "", launch_url: str = "", toast_tag: str = "") -> None:
         """Thread-safe. Can be called from any thread."""
         normalized = tuple(
-            emoji_render.normalize_text(value)
+            text_utils.normalize_text(value)
             for value in (message, title, kind, aumid, icon_path, app_name, launch_url, toast_tag)
         )
         if (self.gemini_enabled and gemini_summarizer.should_summarize(normalized[0])
@@ -90,7 +95,7 @@ class NotificationManager:
     def _summarize_and_enqueue(self, message, title, kind, aumid, icon_path, app_name, launch_url, toast_tag):
         summary = gemini_summarizer.summarize(message)
         self._enqueue(
-            emoji_render.normalize_text(summary) if summary is not None else message,
+            text_utils.normalize_text(summary) if summary is not None else message,
             title,
             kind,
             aumid,
@@ -103,24 +108,22 @@ class NotificationManager:
     def _enqueue(self, message, title, kind, aumid, icon_path, app_name, launch_url, toast_tag):
         self.queue.put((message, title, kind, aumid, icon_path, app_name, launch_url, toast_tag))
 
-    def run(self):
-        self.root.mainloop()
-
     # ------------------------------------------------------------------
-    # Queue / toast lifecycle
+    # Queue / worker loop
     # ------------------------------------------------------------------
-    def _poll_queue(self):
-        try:
-            while True:
-                message, title, kind, aumid, icon_path, app_name, launch_url, toast_tag = self.queue.get_nowait()
+    def _worker_loop(self):
+        while not self._shutdown_event.is_set():
+            try:
+                item = self.queue.get()
+                if item is None or self._shutdown_event.is_set():
+                    break
+                message, title, kind, aumid, icon_path, app_name, launch_url, toast_tag = item
                 try:
                     self._show_toast(message, title, kind, aumid, icon_path, app_name, launch_url, toast_tag)
                 except Exception:
                     applog.get_logger().exception("dropped bad notification")
-        except queue.Empty:
-            pass
-        finally:
-            self.root.after(50, self._poll_queue)
+            except Exception:
+                applog.get_logger().exception("worker error in notification queue")
 
     def _show_toast(self, message, title, kind, aumid="", icon_path="", app_name="", launch_url="", toast_tag=""):
         if self.is_app_excluded(app_name, aumid):
@@ -128,9 +131,12 @@ class NotificationManager:
 
         suppressed = self.is_focus_suppressed(app_name, aumid)
         group_key = f"{aumid or app_name}\x1f{title or kind}".strip().lower()
+        entry_id = uuid.uuid4().hex
 
         with self.lock:
             entry = {
+                "id": entry_id,
+                "group_key": group_key,
                 "message": message,
                 "title": title,
                 "kind": kind,
@@ -162,78 +168,56 @@ class NotificationManager:
             return
 
         now = time.monotonic()
-        if self.sound_enabled and (now - self._last_sound_ts) * 1000 >= config.SOUND_COOLDOWN_MS:
+        cooldown_ms = getattr(config, "SOUND_COOLDOWN_MS", 1500)
+        if self.sound_enabled and (now - self._last_sound_ts) * 1000 >= cooldown_ms:
             self._last_sound_ts = now
-            sound.play_notification_sound()
+            sound.play_notification_sound(self.custom_sound_path)
 
-        with self.lock:
-            existing = None
-            if config.GROUP_WINDOW_SEC > 0:
-                for toast in self.active:
-                    if toast.alive and toast.group_key == group_key and (time.monotonic() - toast.created_at) <= config.GROUP_WINDOW_SEC:
-                        existing = toast
-                        break
-
-            if existing is not None:
-                existing.group_count += 1
-                existing.aumid = aumid
-                existing.toast_tag = toast_tag or existing.toast_tag
-                if icon_path:
-                    existing.icon_path = icon_path
-                if launch_url:
-                    existing.launch_url = launch_url
-                existing.history_entries.append(entry)
-                existing.refresh(message, title, kind, existing.group_count, app_name=app_name)
-                self._bump_unread()
-                self._restack()
-                if self.on_history_change:
-                    self.on_history_change()
-                self.save_history()
-                return
-
-        toast = Toast(self, message, title, kind, group_key=group_key, aumid=aumid, icon_path=icon_path,
-                       app_name=app_name, launch_url=launch_url, toast_tag=toast_tag)
-        toast.history_entries = [entry]
-        self._place_off_screen(toast)
-
-        with self.lock:
-            self.active.append(toast)
-
-        self._restack()
-        toast.start_countdown(self.duration_for(kind))
+        if self.on_toast:
+            self.on_toast(entry)
         self._bump_unread()
         if self.on_history_change:
             self.on_history_change()
         self.save_history()
+
     # ------------------------------------------------------------------
     # Activation (click-through to source app)
     # ------------------------------------------------------------------
-    def activate(self, toast):
-        self.remove_history_entries(toast.history_entries)
-        source_hwnd = None
-        try:
-            source_hwnd = toast.win.winfo_id()
-        except tk.TclError:
-            pass
-        self._launch_app(
-            toast.aumid,
-            toast.launch_url,
-            toast_tag=toast.toast_tag,
-            title=toast.title,
-            message=toast.message,
-            app_name=toast.app_name,
-            source_hwnd=source_hwnd,
-        )
-        toast.dismiss()
-
-    def remove_history_entries(self, entries):
+    def activate(self, entry_ids: list[str]) -> None:
+        """Remove the given history entries and launch the source app."""
+        if not entry_ids:
+            return
+        target_ids = set(entry_ids)
+        matching_entries = []
         with self.lock:
-            for entry in entries:
-                if entry in self.history:
-                    self.history.remove(entry)
+            for entry in self.history:
+                if entry.get("id") in target_ids:
+                    matching_entries.append(entry)
+        if not matching_entries:
+            return
+        newest = matching_entries[-1]
+        self.remove_history_entries(matching_entries)
+        self._launch_app(
+            newest.get("aumid", ""),
+            newest.get("launch_url", ""),
+            toast_tag=newest.get("toast_tag", ""),
+            title=newest.get("title", ""),
+            message=newest.get("message", ""),
+            app_name=newest.get("app_name", ""),
+            source_hwnd=None,
+        )
+
+    def remove_history_entries(self, entries_or_ids):
+        with self.lock:
+            ids_to_remove = {
+                item if isinstance(item, str) else item.get("id")
+                for item in entries_or_ids
+            }
+            self.history = [e for e in self.history if e.get("id") not in ids_to_remove]
         if self.on_history_change:
             self.on_history_change()
         self.save_history()
+
     def _launch_app(self, aumid, launch_url="", toast_tag="", title="", message="", app_name="", source_hwnd=None):
         if beeper_deeplink.is_beeper_aumid(aumid, app_name):
             url = launch_url
@@ -276,7 +260,9 @@ class NotificationManager:
     def clear_history(self):
         with self.lock:
             self.history = []
-        self.mark_all_read()
+        self.unread_count = 0
+        if self.on_unread_change:
+            self.on_unread_change(self.unread_count)
         if self.on_history_change:
             self.on_history_change()
         self.save_history()
@@ -290,109 +276,38 @@ class NotificationManager:
             self.on_unread_change(self.unread_count)
         self.save_history()
 
-    def _monitor_rect(self):
-        """Rect for the configured monitor, re-resolved by device name so a
-        replugged or reordered display can't leave toasts on a dead index."""
-        rect = get_monitor_rect(self.monitor)
-        if self.monitor_device and rect.device != self.monitor_device:
-            self.monitor = resolve_monitor_index(self.monitor_device)
-            rect = get_monitor_rect(self.monitor)
-        return rect
-
-    def _place_off_screen(self, toast):
-        """Position a brand-new toast just outside the screen edge it will
-        slide in from, so the entry animation is a straight slide rather
-        than a diagonal move from a fixed off-screen point."""
-        rect = self._monitor_rect()
-
-        with self.lock:
-            toasts = list(self.active)
-
-        ty = rect.y + config.MARGIN
-        for prev in toasts:
-            if not prev.alive:
-                continue
-            ty += prev.card_height + config.NOTIF_GAP
-        if self.position == "right":
-            sx = rect.x + rect.width
-            sy = ty
-        elif self.position == "left":
-            sx = rect.x - config.NOTIF_WIDTH - config.SHADOW_OFFSET
-            sy = ty
-        else:  # center
-            sx = rect.x + (rect.width - config.NOTIF_WIDTH) // 2
-            sy = rect.y - config.NOTIF_HEIGHT - config.SHADOW_OFFSET - config.MARGIN
-
-        toast.win.geometry(f"+{sx}+{sy}")
-        toast.cur_x, toast.cur_y = sx, sy
-
-    def _restack(self):
-        rect = self._monitor_rect()
-
-        with self.lock:
-            toasts = list(self.active)
-
-        ty = rect.y + config.MARGIN
-        for toast in toasts:
-            if not toast.alive:
-                continue
-            if self.position == "right":
-                tx = rect.x + rect.width - config.NOTIF_WIDTH - config.MARGIN
-            elif self.position == "left":
-                tx = rect.x + config.MARGIN
-            else:  # center
-                tx = rect.x + (rect.width - config.NOTIF_WIDTH) // 2
-
-            toast.animate_to(tx, ty)
-            ty += toast.card_height + config.NOTIF_GAP
-
-    def remove(self, toast):
-        with self.lock:
-            if toast in self.active:
-                self.active.remove(toast)
-        self._restack()
-
-    def clear_all(self, animate=True):
-        with self.lock:
-            toasts = list(self.active)
-        for toast in toasts:
-            toast.dismiss(animate=animate)
-
     # ------------------------------------------------------------------
-    # Animation & countdown tickers
+    # Appearance / Settings Setters
     # ------------------------------------------------------------------
-    def register_animation(self, toast):
-        self._animating.add(toast)
-        if self._anim_job is None:
-            self._anim_job = self.root.after(config.ANIM_FRAME_MS, self._tick_animations)
+    def set_position(self, pos: str) -> bool:
+        if pos in ("right", "center", "left"):
+            self.position = pos
+            self.save_settings()
+            if self.on_settings_change:
+                self.on_settings_change()
+            return True
+        return False
 
-    def unregister_animation(self, toast):
-        self._animating.discard(toast)
+    def set_monitor(self, index: int, device: str = "") -> None:
+        self.monitor = int(index)
+        if device:
+            self.monitor_device = device
+        else:
+            self.monitor_device = device_for_index(self.monitor)
+        self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
 
-    def _tick_animations(self):
-        self._anim_job = None
-        now = time.monotonic()
-        for toast in list(self._animating):
-            anim = toast.anim
-            if anim is None:
-                self._animating.discard(toast)
-                continue
-            t = 1.0 if anim["dur"] <= 0 else min(1.0, (now - anim["t0"]) / anim["dur"])
-            if toast.apply_frame(t):
-                self._animating.discard(toast)
-        if self._animating:
-            self._anim_job = self.root.after(config.ANIM_FRAME_MS, self._tick_animations)
+    def duration_for(self, kind: str) -> int:
+        return int(self.durations.get(kind if kind in config.KINDS else "info", config.DURATION_MS))
 
-    def _tick_countdowns(self):
-        with self.lock:
-            toasts = list(self.active)
-        for toast in toasts:
-            if toast.tick_countdown():
-                toast.dismiss()
-        self._countdown_job = self.root.after(config.COUNTDOWN_TICK_MS, self._tick_countdowns)
-    # ------------------------------------------------------------------
-    # Appearance / startup
-    # ------------------------------------------------------------------
+    def set_duration(self, kind: str, duration_ms: int) -> None:
+        if kind in config.KINDS:
+            self.durations[kind] = max(1000, min(60000, int(duration_ms)))
+            self.save_settings()
+            if self.on_settings_change:
+                self.on_settings_change()
+
     def set_accent_color(self, hex_color: str) -> bool:
         hex_color = hex_color.strip()
         if not hex_color.startswith("#"):
@@ -405,39 +320,103 @@ class NotificationManager:
             return False
         self.accent_color = hex_color
         self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
         return True
 
     def set_font_path(self, path: str) -> bool:
         """Set the font file used for notification text. Pass "" to reset to default."""
         path = (path or "").strip()
-        if path and not emoji_render.font_file_is_loadable(path):
-            return False
+        if path:
+            p = Path(path)
+            if not (p.is_file() and p.suffix.lower() in (".ttf", ".otf", ".woff2")):
+                return False
         self.font_path = path
-        emoji_render.set_custom_font_path(path)
         self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
         return True
 
-    def set_start_on_login(self, enabled: bool) -> None:
-        try:
-            startup.set_enabled(enabled)
-            self.start_on_login = enabled
-        except Exception:
-            pass
-
-    # ------------------------------------------------------------------
-    # Do Not Disturb
-    # ------------------------------------------------------------------
-    def toggle_dnd(self):
-        self.dnd = not self.dnd
+    def set_toast_alpha(self, value: float) -> None:
+        self.toast_alpha = max(config.MIN_TOAST_ALPHA, min(1.0, float(value)))
         self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
+
+    def set_toast_scale(self, value: float) -> None:
+        self.toast_scale = max(config.MIN_TOAST_SCALE, min(config.MAX_TOAST_SCALE, float(value)))
+        self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
+
+    def set_sound_enabled(self, enabled: bool) -> None:
+        self.sound_enabled = bool(enabled)
+        self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
+
+    def toggle_sound(self) -> bool:
+        self.set_sound_enabled(not self.sound_enabled)
+        return self.sound_enabled
+
+    def set_custom_sound_path(self, path: str) -> bool:
+        path = (path or "").strip()
+        if path:
+            p = Path(path)
+            if not (p.is_file() and p.suffix.lower() in (".mp3", ".wav", ".wma", ".aac", ".m4a", ".ogg")):
+                return False
+        self.custom_sound_path = path
+        self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
+        return True
+
+    def set_dnd(self, enabled: bool) -> None:
+        self.dnd = bool(enabled)
+        self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
+
+    def toggle_dnd(self) -> bool:
+        self.set_dnd(not self.dnd)
         return self.dnd
 
-    # ------------------------------------------------------------------
-    # Focused-app suppression
-    # ------------------------------------------------------------------
-    def toggle_suppress_focused_app(self):
-        self.suppress_focused_app = not self.suppress_focused_app
+    def set_suppress_focused_app(self, enabled: bool) -> None:
+        self.suppress_focused_app = bool(enabled)
         self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
+
+    def set_animation_setting(self, key: str, value) -> bool:
+        if key == "animation_preset":
+            self.animation_preset = str(value)
+        elif key == "anim_incoming":
+            self.anim_incoming = str(value)
+        elif key == "anim_outgoing":
+            self.anim_outgoing = str(value)
+        elif key == "anim_direction":
+            self.anim_direction = str(value)
+        elif key == "anim_duration":
+            self.anim_duration = max(50, min(3000, int(value)))
+        elif key == "anim_easing":
+            self.anim_easing = str(value)
+        elif key == "anim_distance":
+            self.anim_distance = max(10, min(2000, int(value)))
+        elif key == "anim_bounce":
+            self.anim_bounce = max(0.0, min(1.0, float(value)))
+        elif key == "anim_blur":
+            self.anim_blur = max(0, min(50, int(value)))
+        elif key == "anim_scale":
+            self.anim_scale = max(0.1, min(2.0, float(value)))
+        else:
+            return False
+        self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
+        return True
+
+    def toggle_suppress_focused_app(self) -> bool:
+        self.set_suppress_focused_app(not self.suppress_focused_app)
         return self.suppress_focused_app
 
     def is_focus_suppressed(self, app_name: str, aumid: str = "") -> bool:
@@ -449,8 +428,17 @@ class NotificationManager:
         haystack = f"{app_name} {aumid}".lower()
         return fg_stem in haystack
 
+    def set_gemini_enabled(self, enabled: bool) -> None:
+        self.gemini_enabled = bool(enabled)
+        self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
+
+    def save_gemini_api_key(self, api_key: str) -> bool:
+        return gemini_summarizer.save_api_key(api_key)
+
     # ------------------------------------------------------------------
-    # App exclusions
+    # App exclusions & custom colors
     # ------------------------------------------------------------------
     def add_excluded_app(self, path: str):
         name = get_exe_display_name(path)
@@ -459,6 +447,26 @@ class NotificationManager:
                 return
         self.excluded_apps.append({"path": path, "name": name})
         self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
+
+    def remove_excluded_app(self, index: int):
+        if 0 <= index < len(self.excluded_apps):
+            del self.excluded_apps[index]
+            self.save_settings()
+            if self.on_settings_change:
+                self.on_settings_change()
+
+    def is_app_excluded(self, app_name: str, aumid: str = "") -> bool:
+        haystack = f"{app_name} {aumid}".lower()
+        for entry in self.excluded_apps:
+            name = entry["name"].lower()
+            if name and name in haystack:
+                return True
+            stem = Path(entry["path"]).stem.lower()
+            if stem and stem in haystack:
+                return True
+        return False
 
     def get_accent_for_app(self, app_name: str) -> str:
         """Return a per-app accent color if one is configured, else the global accent."""
@@ -478,34 +486,55 @@ class NotificationManager:
             if entry["exe"].lower() == exe.lower():
                 entry["color"] = color
                 self.save_settings()
+                if self.on_settings_change:
+                    self.on_settings_change()
                 return
         self.app_colors.append({"exe": exe, "color": color})
         self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
 
     def remove_app_color(self, index: int):
         if 0 <= index < len(self.app_colors):
             del self.app_colors[index]
             self.save_settings()
-
-    def remove_excluded_app(self, index: int):
-        if 0 <= index < len(self.excluded_apps):
-            del self.excluded_apps[index]
-            self.save_settings()
-
-    def is_app_excluded(self, app_name: str, aumid: str = "") -> bool:
-        haystack = f"{app_name} {aumid}".lower()
-        for entry in self.excluded_apps:
-            name = entry["name"].lower()
-            if name and name in haystack:
-                return True
-            stem = Path(entry["path"]).stem.lower()
-            if stem and stem in haystack:
-                return True
-        return False
+            if self.on_settings_change:
+                self.on_settings_change()
 
     # ------------------------------------------------------------------
     # Settings persistence
     # ------------------------------------------------------------------
+    def to_settings_dict(self) -> dict:
+        with self.lock:
+            return {
+                "version": config.__version__,
+                "position": self.position,
+                "monitor": self.monitor,
+                "monitor_device": self.monitor_device,
+                "durations": dict(self.durations),
+                "accent_color": self.accent_color,
+                "font_path": self.font_path,
+                "excluded_apps": list(self.excluded_apps),
+                "app_colors": list(self.app_colors),
+                "dnd": self.dnd,
+                "suppress_focused_app": self.suppress_focused_app,
+                "sound_enabled": self.sound_enabled,
+                "toast_alpha": self.toast_alpha,
+                "custom_sound_path": self.custom_sound_path,
+                "toast_scale": self.toast_scale,
+                "gemini_enabled": self.gemini_enabled,
+                "animation_preset": self.animation_preset,
+                "anim_incoming": self.anim_incoming,
+                "anim_outgoing": self.anim_outgoing,
+                "anim_direction": self.anim_direction,
+                "anim_duration": self.anim_duration,
+                "anim_easing": self.anim_easing,
+                "anim_distance": self.anim_distance,
+                "anim_bounce": self.anim_bounce,
+                "anim_blur": self.anim_blur,
+                "anim_scale": self.anim_scale,
+            }
+
     def _load_settings(self):
         if not config.CONFIG_PATH.exists():
             return
@@ -527,20 +556,18 @@ class NotificationManager:
             self.monitor_device = stored_device
             self.monitor = resolve_monitor_index(stored_device)
         else:
-            # Pre-1.2.0 configs stored a bare index taken from the arbitrary
-            # EnumDisplayMonitors order, so it can't be remapped: the same
-            # index means a different physical display run to run. Reset to
-            # primary once, and record the device name from here on.
             self.monitor = config.DEFAULT_MONITOR
             self.monitor_device = device_for_index(self.monitor)
+
         stored = data.get("durations")
         if isinstance(stored, dict):
-            for kind in config.ICONS:
+            for kind in config.KINDS:
                 if isinstance(stored.get(kind), (int, float)):
                     self.durations[kind] = max(1000, min(60000, int(stored[kind])))
         elif isinstance(data.get("duration_ms"), (int, float)):
             legacy = max(1000, min(60000, int(data["duration_ms"])))
-            self.durations = {kind: legacy for kind in config.ICONS}
+            self.durations = {kind: legacy for kind in config.KINDS}
+
         self.accent_color = data.get("accent_color", self.accent_color)
         self.font_path = data.get("font_path", self.font_path)
         self.excluded_apps = data.get("excluded_apps", self.excluded_apps)
@@ -549,66 +576,83 @@ class NotificationManager:
         self.suppress_focused_app = data.get("suppress_focused_app", self.suppress_focused_app)
         self.sound_enabled = bool(data.get("sound_enabled", self.sound_enabled))
         self.gemini_enabled = bool(data.get("gemini_enabled", self.gemini_enabled))
+        self.custom_sound_path = data.get("custom_sound_path", self.custom_sound_path)
         try:
             self.toast_alpha = float(data.get("toast_alpha", self.toast_alpha))
             self.toast_alpha = max(config.MIN_TOAST_ALPHA, min(1.0, self.toast_alpha))
         except (ValueError, TypeError):
             self.toast_alpha = config.TOAST_ALPHA
-        self.history = data.get("history", self.history)
+        try:
+            self.toast_scale = float(data.get("toast_scale", self.toast_scale))
+            self.toast_scale = max(
+                config.MIN_TOAST_SCALE, min(config.MAX_TOAST_SCALE, self.toast_scale)
+            )
+        except (ValueError, TypeError):
+            self.toast_scale = config.DEFAULT_TOAST_SCALE
+
+        self.animation_preset = data.get("animation_preset", self.animation_preset)
+        self.anim_incoming = data.get("anim_incoming", self.anim_incoming)
+        self.anim_outgoing = data.get("anim_outgoing", self.anim_outgoing)
+        self.anim_direction = data.get("anim_direction", self.anim_direction)
+        try:
+            self.anim_duration = max(50, min(3000, int(data.get("anim_duration", self.anim_duration))))
+        except (ValueError, TypeError):
+            self.anim_duration = config.DEFAULT_ANIM_DURATION
+        self.anim_easing = data.get("anim_easing", self.anim_easing)
+        try:
+            self.anim_distance = max(10, min(2000, int(data.get("anim_distance", self.anim_distance))))
+        except (ValueError, TypeError):
+            self.anim_distance = config.DEFAULT_ANIM_DISTANCE
+        try:
+            self.anim_bounce = max(0.0, min(1.0, float(data.get("anim_bounce", self.anim_bounce))))
+        except (ValueError, TypeError):
+            self.anim_bounce = config.DEFAULT_ANIM_BOUNCE
+        try:
+            self.anim_blur = max(0, min(50, int(data.get("anim_blur", self.anim_blur))))
+        except (ValueError, TypeError):
+            self.anim_blur = config.DEFAULT_ANIM_BLUR
+        try:
+            self.anim_scale = max(0.1, min(2.0, float(data.get("anim_scale", self.anim_scale))))
+        except (ValueError, TypeError):
+            self.anim_scale = config.DEFAULT_ANIM_SCALE
+        raw_history = data.get("history", self.history)
+        if not isinstance(raw_history, list):
+            raw_history = []
+
+        # Backfill id and group_key on existing history entries
+        for entry in raw_history:
+            if isinstance(entry, dict):
+                if not entry.get("id"):
+                    entry["id"] = uuid.uuid4().hex
+                if not entry.get("group_key"):
+                    aumid = entry.get("aumid", "")
+                    app_name = entry.get("app_name", "")
+                    title = entry.get("title", "")
+                    kind = entry.get("kind", "")
+                    entry["group_key"] = f"{aumid or app_name}\x1f{title or kind}".strip().lower()
+
+        self.history = raw_history[-config.HISTORY_LIMIT:]
+        self.unread_count = sum(1 for e in self.history if not e.get("read", False))
 
         if self.position not in ("right", "center", "left"):
             self.position = config.DEFAULT_POSITION
-        if not isinstance(self.history, list):
-            self.history = []
-        self.history = self.history[-config.HISTORY_LIMIT:]
 
-    def duration_for(self, kind: str) -> int:
-        return int(self.durations.get(kind if kind in config.ICONS else "info", config.DURATION_MS))
-
-    def set_duration(self, kind: str, duration_ms: int) -> None:
-        if kind in config.ICONS:
-            self.durations[kind] = max(1000, min(60000, int(duration_ms)))
-            self.save_settings()
-
-    def toggle_sound(self) -> bool:
-        self.sound_enabled = not self.sound_enabled
-        self.save_settings()
-        return self.sound_enabled
-
-    def set_toast_alpha(self, value: float) -> None:
-        self.toast_alpha = max(config.MIN_TOAST_ALPHA, min(1.0, float(value)))
-        with self.lock:
-            toasts = [t for t in self.active if t.alive]
-        for toast in toasts:
-            toast.animate_to(toast.cur_x, toast.cur_y)
-        self.save_settings()
-
-
-    def set_gemini_enabled(self, enabled: bool) -> None:
-        self.gemini_enabled = bool(enabled)
-        self.save_settings()
-
-    def save_gemini_api_key(self, api_key: str) -> bool:
-        return gemini_summarizer.save_api_key(api_key)
     def save_settings(self):
         """Persist settings immediately (user actions, quit, explicit Save)."""
         self._persist_now()
 
     def save_history(self):
-        """Debounced persist for notification history churn.
-
-        Every mirrored toast used to rewrite the full config JSON synchronously
-        on the Tk main thread; under a burst of notifications that stalls the
-        event loop and makes the tray menu feel frozen.
-        """
+        """Debounced persist for notification history churn."""
         if self._persist_job is not None:
-            self.root.after_cancel(self._persist_job)
-        self._persist_job = self.root.after(400, self._persist_debounced)
+            self._persist_job.cancel()
+        self._persist_job = threading.Timer(0.4, self._persist_debounced)
+        self._persist_job.daemon = True
+        self._persist_job.start()
 
     def flush_persist(self):
         """Write any pending debounced state now (e.g. on quit)."""
         if self._persist_job is not None:
-            self.root.after_cancel(self._persist_job)
+            self._persist_job.cancel()
             self._persist_job = None
         self._persist_now()
 
@@ -632,8 +676,20 @@ class NotificationManager:
                 "suppress_focused_app": self.suppress_focused_app,
                 "sound_enabled": self.sound_enabled,
                 "toast_alpha": self.toast_alpha,
+                "toast_scale": self.toast_scale,
+                "custom_sound_path": self.custom_sound_path,
                 "history": list(self.history),
                 "gemini_enabled": self.gemini_enabled,
+                "animation_preset": self.animation_preset,
+                "anim_incoming": self.anim_incoming,
+                "anim_outgoing": self.anim_outgoing,
+                "anim_direction": self.anim_direction,
+                "anim_duration": self.anim_duration,
+                "anim_easing": self.anim_easing,
+                "anim_distance": self.anim_distance,
+                "anim_bounce": self.anim_bounce,
+                "anim_blur": self.anim_blur,
+                "anim_scale": self.anim_scale,
             }
         with self._save_lock:
             tmp = config.CONFIG_PATH.with_name(config.CONFIG_PATH.name + ".tmp")
@@ -647,10 +703,9 @@ class NotificationManager:
                 pass
 
     def shutdown(self):
-        self.clear_all(animate=False)
+        self._shutdown_event.set()
         self.flush_persist()
         try:
-            self.root.quit()
-            self.root.destroy()
-        except tk.TclError:
+            self.queue.put_nowait(None)
+        except Exception:
             pass

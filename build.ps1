@@ -1,28 +1,15 @@
-# Builds a single-file, windowless executable for the Notification Tray.
+# Builds the Electron + React + Kokonut UI + Motion application.
 #
 # Usage:
 #   .\build.ps1
-#
-# Output: dist\NotificationTray.exe
 
 $ErrorActionPreference = "Stop"
 
-pip install -q -r requirements.txt
-pip install -q pyinstaller
-
-python -m PyInstaller `
-    --noconfirm `
-    --noconsole `
-    --onefile `
-    --name NotificationTray `
-    --add-data "fears-to-fathom-notification.mp3;." `
-    --collect-all winsdk `
-    --collect-all pystray `
-    --collect-all PIL `
-    notification_tray.py
+Write-Host "Building Notification Tray..."
+npm run build
 
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-Write-Host "Build complete: dist\NotificationTray.exe"
+Write-Host "Build complete! Output in dist/"
