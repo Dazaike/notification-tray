@@ -262,9 +262,10 @@ const ToastCard: React.FC<ToastCardProps> = ({
 export const Overlay: React.FC = () => {
   const [toasts, setToasts] = useState<LiveToast[]>([]);
   const [settings, setSettings] = useState<AppSettings>({
-    version: "2.0.12",
+    version: "2.0.13",
     position: "right",
     monitor: 0,
+    tray_click_action: "center",
     monitor_device: "",
     durations: { info: 5000, success: 5000, warning: 5000, error: 5000 },
     accent_color: "#4f98a3",
@@ -328,7 +329,12 @@ export const Overlay: React.FC = () => {
     if (!window.tray) return;
 
     window.tray
-      .request<{ settings: AppSettings }>("monitors")
+      ?.request<{ settings?: AppSettings }>("getState")
+      .then((res) => {
+        if (res?.settings) {
+          setSettings((prev) => ({ ...prev, ...res.settings }));
+        }
+      })
       .catch(() => {});
 
     const unsubSettings = window.tray.on<AppSettings>("settings", (newSettings) => {

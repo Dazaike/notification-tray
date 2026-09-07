@@ -109,6 +109,26 @@ class TestAnimationSettings(unittest.TestCase):
         self.assertTrue(hasattr(config, "SOUND_COOLDOWN_MS"))
         self.assertGreater(config.SOUND_COOLDOWN_MS, 0)
 
+    def test_tray_click_action_setting(self):
+        mgr = NotificationManager()
+        self.assertEqual(mgr.tray_click_action, "center")
+        self.assertEqual(mgr.to_settings_dict()["tray_click_action"], "center")
+
+        self.assertTrue(mgr.set_tray_click_action("panel"))
+        self.assertEqual(mgr.tray_click_action, "panel")
+        self.assertEqual(mgr.to_settings_dict()["tray_click_action"], "panel")
+
+        # Persistence test
+        mgr2 = NotificationManager()
+        self.assertEqual(mgr2.tray_click_action, "panel")
+
+        self.assertTrue(mgr2.set_tray_click_action("center"))
+        self.assertEqual(mgr2.tray_click_action, "center")
+
+        # Normalization of settings -> panel
+        self.assertTrue(mgr2.set_tray_click_action("settings"))
+        self.assertEqual(mgr2.tray_click_action, "panel")
+
 
 if __name__ == "__main__":
     unittest.main()

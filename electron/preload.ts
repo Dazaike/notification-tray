@@ -25,6 +25,15 @@ contextBridge.exposeInMainWorld("tray", {
   hideSelf(): void {
     ipcRenderer.send("hide-self");
   },
+  showPanel(): void {
+    ipcRenderer.send("show-panel");
+  },
+  togglePanel(): void {
+    ipcRenderer.send("toggle-panel");
+  },
+  toggleCenter(): void {
+    ipcRenderer.send("toggle-center");
+  },
   pickFile(kind: "exe" | "font" | "audio"): Promise<string | null> {
     return ipcRenderer.invoke("pick-file", kind);
   },

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Info, Check, TriangleAlert, X, BellOff } from "lucide-react";
+import { Info, Check, TriangleAlert, X, BellOff, Settings } from "lucide-react";
 import { ActionSearchBar } from "@/components/kokonutui/action-search-bar";
 import { HoldButton } from "@/components/kokonutui/hold-button";
 import { LiquidGlassCard } from "@/components/kokonutui/liquid-glass-card";
@@ -51,9 +51,10 @@ export const Center: React.FC = () => {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [search, setSearch] = useState("");
   const [settings, setSettings] = useState<AppSettings>({
-    version: "2.0.12",
+    version: "2.0.13",
     position: "right",
     monitor: 0,
+    tray_click_action: "center",
     monitor_device: "",
     durations: { info: 5000, success: 5000, warning: 5000, error: 5000 },
     accent_color: "#4f98a3",
@@ -70,6 +71,21 @@ export const Center: React.FC = () => {
 
   useEffect(() => {
     if (!window.tray) return;
+
+    window.tray
+      ?.request<{
+        history?: HistoryEntry[];
+        settings?: AppSettings;
+      }>("getState")
+      .then((res) => {
+        if (res && Array.isArray(res.history)) {
+          setHistory(res.history);
+        }
+        if (res?.settings) {
+          setSettings((prev) => ({ ...prev, ...res.settings }));
+        }
+      })
+      .catch(() => {});
 
     // Listen for history updates
     const unsubHistory = window.tray.on<{ history: HistoryEntry[] }>("history", (data) => {
@@ -184,13 +200,24 @@ export const Center: React.FC = () => {
             {history.length} {history.length === 1 ? "notification" : "notifications"}
           </p>
         </div>
-        {history.length > 0 && (
-          <div style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+        <div
+          className="flex items-center gap-2"
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        >
+          {history.length > 0 && (
             <HoldButton onAction={handleClearAll} holdDurationMs={900}>
               Clear all
             </HoldButton>
-          </div>
-        )}
+          )}
+          <button
+            type="button"
+            onClick={() => window.tray?.showPanel?.()}
+            className="p-1.5 rounded-lg border border-border bg-card/60 hover:bg-hover text-muted hover:text-fg transition-colors cursor-pointer"
+            title="Open Settings Panel"
+          >
+            <Settings className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Search field */}

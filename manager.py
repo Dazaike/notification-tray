@@ -31,6 +31,7 @@ class NotificationManager:
         self._shutdown_event = threading.Event()
 
         self.position = config.DEFAULT_POSITION
+        self.tray_click_action = config.DEFAULT_TRAY_CLICK_ACTION
         self.monitor = config.DEFAULT_MONITOR
         self.monitor_device = ""
         self.durations = {kind: config.DURATION_MS for kind in config.KINDS}
@@ -287,6 +288,14 @@ class NotificationManager:
                 self.on_settings_change()
             return True
         return False
+    def set_tray_click_action(self, action: str) -> bool:
+        norm = "panel" if action in ("panel", "settings") else "center"
+        self.tray_click_action = norm
+        self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
+        return True
+
 
     def set_monitor(self, index: int, device: str = "") -> None:
         self.monitor = int(index)
@@ -509,6 +518,7 @@ class NotificationManager:
             return {
                 "version": config.__version__,
                 "position": self.position,
+                "tray_click_action": self.tray_click_action,
                 "monitor": self.monitor,
                 "monitor_device": self.monitor_device,
                 "durations": dict(self.durations),
@@ -537,6 +547,7 @@ class NotificationManager:
 
     def _load_settings(self):
         if not config.CONFIG_PATH.exists():
+            self.save_settings()
             return
         try:
             with open(config.CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -551,10 +562,15 @@ class NotificationManager:
             return
 
         self.position = data.get("position", self.position)
+        action = data.get("tray_click_action", self.tray_click_action)
+        self.tray_click_action = "panel" if action in ("panel", "settings") else "center"
         stored_device = data.get("monitor_device")
         if isinstance(stored_device, str) and stored_device:
             self.monitor_device = stored_device
             self.monitor = resolve_monitor_index(stored_device)
+        elif "monitor" in data and isinstance(data["monitor"], int):
+            self.monitor = data["monitor"]
+            self.monitor_device = device_for_index(self.monitor)
         else:
             self.monitor = config.DEFAULT_MONITOR
             self.monitor_device = device_for_index(self.monitor)
@@ -665,6 +681,7 @@ class NotificationManager:
             data = {
                 "version": config.__version__,
                 "position": self.position,
+                "tray_click_action": self.tray_click_action,
                 "monitor": self.monitor,
                 "monitor_device": self.monitor_device,
                 "durations": dict(self.durations),

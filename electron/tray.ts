@@ -1,6 +1,6 @@
 import { app, Menu, nativeImage, screen, Tray } from "electron";
 import { request } from "./core";
-import { showPanelWindow, toggleCenterWindow } from "./windows";
+import { handleTrayClick, showPanelWindow, toggleCenterWindow } from "./windows";
 
 let tray: Tray | null = null;
 let lastUnread = 0;
@@ -43,7 +43,7 @@ export function createTray(onQuit: () => void): Tray {
       },
     },
     {
-      label: "Show panel",
+      label: "Settings",
       type: "normal",
       click: () => {
         showPanelWindow();
@@ -85,7 +85,11 @@ export function createTray(onQuit: () => void): Tray {
   tray.setContextMenu(contextMenu);
 
   tray.on("click", () => {
-    toggleCenterWindow();
+    handleTrayClick();
+  });
+
+  tray.on("double-click", () => {
+    handleTrayClick();
   });
 
   refreshTrayIcon().catch(() => {});

@@ -1,4 +1,4 @@
-# Windows Notification Tray (v2.0.12)
+# Windows Notification Tray (v2.0.13)
 
 A modern, fluid Windows 11 notification tray built on **Electron**, **React 19**, **Tailwind CSS v4**, **Kokonut UI**, and **Motion**.
 
@@ -74,3 +74,5 @@ This generates `dist/win-unpacked/notification-tray.exe` and an NSIS installer u
 - **Draggable Frameless Windows** — Native drag-and-move support on settings and notification center header bars.
 - **Gemini AI Summaries** — Optional AI summarization for notifications over 20 words. API keys are stored in the Windows Credential Manager.
 - **Deep Links & App Activation** — Clicking a notification activates the source app via COM, native toast activation, or Beeper/protocol deep links.
+- **Tray Icon Click Action** — Configurable tray click behavior: open either the Notification Center or the Settings Panel directly on click.
+- **Instant Settings Sync** — Immediate state hydration on app startup across all window surfaces with robust fallback resolution.

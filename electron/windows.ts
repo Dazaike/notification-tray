@@ -15,6 +15,7 @@ export interface CoreMonitor {
 export interface AppSettings {
   version: string;
   position: "right" | "center" | "left";
+  tray_click_action?: "center" | "panel";
   monitor: number;
   monitor_device: string;
   durations: Record<string, number>;
@@ -44,6 +45,16 @@ export interface AppSettings {
 let overlayWin: BrowserWindow | null = null;
 let centerWin: BrowserWindow | null = null;
 let panelWin: BrowserWindow | null = null;
+
+let lastReadyData: unknown = null;
+
+export function setReadyData(data: unknown): void {
+  lastReadyData = data;
+}
+
+export function getCurrentSettings(): AppSettings | null {
+  return currentSettings;
+}
 
 let currentSettings: AppSettings | null = null;
 let currentMonitors: CoreMonitor[] = [];
@@ -226,7 +237,16 @@ export function createWindows(preloadPath: string): void {
   loadSurface(panelWin, "panel");
 
   for (const w of [overlayWin, centerWin, panelWin]) {
-    w?.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    if (!w) continue;
+    w.webContents.on("did-finish-load", () => {
+      if (lastReadyData) {
+        w.webContents.send("core-event", "ready", lastReadyData);
+      }
+      if (currentSettings) {
+        w.webContents.send("core-event", "settings", currentSettings);
+      }
+    });
+    w.webContents.on("console-message", (_event, level, message, line, sourceId) => {
       if (level >= 2) {
         console.warn(`[Renderer Err] ${message} (${sourceId}:${line})`);
       }
@@ -267,6 +287,26 @@ export function showPanelWindow(): void {
   panelWin.show();
   panelWin.focus();
 }
+export function togglePanelWindow(): void {
+  if (!panelWin || panelWin.isDestroyed()) return;
+  if (panelWin.isVisible() && !panelWin.isMinimized()) {
+    panelWin.hide();
+  } else {
+    repositionWindows();
+    panelWin.show();
+    panelWin.focus();
+  }
+}
+
+export function handleTrayClick(): void {
+  const action = currentSettings?.tray_click_action ?? "center";
+  if (action === "panel") {
+    togglePanelWindow();
+  } else {
+    toggleCenterWindow();
+  }
+}
+
 
 export function getAllWindows(): BrowserWindow[] {
   return [overlayWin, centerWin, panelWin].filter(

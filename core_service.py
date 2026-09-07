@@ -135,6 +135,8 @@ def main() -> None:
                 ok = False
                 if key == "position":
                     ok = manager.set_position(value)
+                elif key == "tray_click_action":
+                    ok = manager.set_tray_click_action(value)
                 elif key == "monitor":
                     manager.set_monitor(value)
                     ok = True
@@ -219,6 +221,26 @@ def main() -> None:
             elif op == "monitors":
                 payload = get_monitors_payload()
                 send_response(req_id, True, {"monitors": payload})
+            elif op == "getState":
+                send_response(req_id, True, {
+                    "version": config.__version__,
+                    "settings": manager.to_settings_dict(),
+                    "history": manager.history,
+                    "unread": manager.unread_count,
+                    "monitors": get_monitors_payload(),
+                })
+
+            elif op == "getSettings":
+                send_response(req_id, True, {
+                    "settings": manager.to_settings_dict(),
+                    "monitors": get_monitors_payload(),
+                })
+
+            elif op == "getHistory":
+                send_response(req_id, True, {
+                    "history": manager.history,
+                    "unread": manager.unread_count,
+                })
 
             elif op == "trayIcon":
                 size = args.get("size", 16)

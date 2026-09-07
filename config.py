@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-__version__ = "2.0.12"
+__version__ = "2.0.13"
 KINDS = ("info", "success", "warning", "error")
 DURATION_MS = 5000
 MIN_TOAST_ALPHA = 0.6
@@ -15,6 +15,7 @@ GROUP_WINDOW_SEC = 30
 SOUND_COOLDOWN_MS = 1500
 HISTORY_LIMIT = 200
 DEFAULT_POSITION = "right"
+DEFAULT_TRAY_CLICK_ACTION = "center"
 DEFAULT_MONITOR = 0
 DEFAULT_FONT_PATH = ""
 DEFAULT_ACCENT = "#4f98a3"

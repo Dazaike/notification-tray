@@ -95,9 +95,10 @@ export const Panel: React.FC = () => {
 
   const [sandboxVisible, setSandboxVisible] = useState(true);
   const [settings, setSettings] = useState<AppSettings>({
-    version: "2.0.12",
+    version: "2.0.13",
     position: "right",
     monitor: 0,
+    tray_click_action: "center",
     monitor_device: "",
     durations: { info: 5000, success: 5000, warning: 5000, error: 5000 },
     accent_color: "#4f98a3",
@@ -133,6 +134,24 @@ export const Panel: React.FC = () => {
     if (!window.tray) return;
 
     window.tray
+      .request<{
+        settings?: AppSettings;
+        monitors?: MonitorInfo[];
+      }>("getState")
+      .then((res) => {
+        if (res?.settings) {
+          setSettings((prev) => ({ ...prev, ...res.settings }));
+          if (res.settings.accent_color) {
+            setAccentInput(res.settings.accent_color);
+          }
+        }
+        if (Array.isArray(res?.monitors)) {
+          setMonitors(res.monitors);
+        }
+      })
+      .catch(() => {});
+
+    window.tray
       .request<{ monitors: MonitorInfo[] }>("monitors")
       .then((res) => {
         if (res && Array.isArray(res.monitors)) {
@@ -140,7 +159,6 @@ export const Panel: React.FC = () => {
         }
       })
       .catch(() => {});
-
     window.tray
       .request<{ present: boolean }>("geminiKeyPresent")
       .then((res) => {
@@ -384,7 +402,7 @@ export const Panel: React.FC = () => {
           </div>
           <div>
             <h1 className="text-sm font-semibold tracking-tight">Notification Settings</h1>
-            <p className="text-[10px] text-muted">Version {settings.version || "2.0.12"}</p>
+            <p className="text-[10px] text-muted">Version {settings.version || "2.0.13"}</p>
           </div>
         </div>
 
@@ -987,6 +1005,46 @@ export const Panel: React.FC = () => {
               transition={{ duration: 0.18 }}
               className="space-y-4"
             >
+              {/* Tray Icon Click Action */}
+              <SpotlightCard>
+                <h3 className="text-xs font-semibold text-fg mb-1">Tray Icon Click Action</h3>
+                <p className="text-[11px] text-muted mb-3">
+                  Choose what opens when clicking the main tray icon
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    {
+                      id: "center" as const,
+                      label: "Notification Center",
+                      desc: "Show notification history and alerts",
+                    },
+                    {
+                      id: "panel" as const,
+                      label: "Settings Panel",
+                      desc: "Open configuration preferences",
+                    },
+                  ].map((opt) => {
+                    const isSelected = (settings.tray_click_action || "center") === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => updateSetting("tray_click_action", opt.id)}
+                        className={cn(
+                          "p-2.5 rounded-lg text-left border transition-all cursor-pointer",
+                          isSelected
+                            ? "bg-[var(--accent-soft)] border-[var(--accent)]/60 text-fg shadow-sm"
+                            : "bg-card border-border text-subtext hover:text-fg hover:bg-hover"
+                        )}
+                      >
+                        <div className="text-xs font-medium">{opt.label}</div>
+                        <div className="text-[10px] text-muted mt-0.5">{opt.desc}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </SpotlightCard>
+
               {/* Notification Durations */}
               <SpotlightCard>
                 <h3 className="text-xs font-semibold text-fg mb-3">Toast Durations</h3>

@@ -7,8 +7,12 @@ import {
   createWindows,
   getAllWindows,
   getOverlayWindow,
+  handleTrayClick,
   setAppQuitting,
+  setReadyData,
+  showPanelWindow,
   toggleCenterWindow,
+  togglePanelWindow,
   updateState,
   type AppSettings,
   type CoreMonitor,
@@ -32,7 +36,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 app.on("second-instance", () => {
-  toggleCenterWindow();
+  handleTrayClick();
 });
 
 app.on("window-all-closed", () => {
@@ -101,6 +105,18 @@ app.whenReady().then(async () => {
       win.hide();
     }
   });
+  ipcMain.on("show-panel", () => {
+    showPanelWindow();
+  });
+
+  ipcMain.on("toggle-panel", () => {
+    togglePanelWindow();
+  });
+
+  ipcMain.on("toggle-center", () => {
+    toggleCenterWindow();
+  });
+
 
   ipcMain.handle("pick-file", async (_event, kind: "exe" | "font" | "audio") => {
     const filters =
@@ -140,6 +156,10 @@ app.whenReady().then(async () => {
       }
     }
   });
+  onCoreEvent("ready", (data: unknown) => {
+    setReadyData(data);
+  });
+
 
   onCoreEvent("unread", (data: unknown) => {
     if (data && typeof data === "object" && "count" in data) {
@@ -162,6 +182,7 @@ app.whenReady().then(async () => {
   try {
     const rawReady = await startCore();
     if (rawReady && typeof rawReady === "object") {
+      setReadyData(rawReady);
       const readyObj = rawReady as {
         settings?: AppSettings;
         monitors?: CoreMonitor[];

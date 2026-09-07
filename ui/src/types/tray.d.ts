@@ -93,6 +93,7 @@ export interface LiveToast {
 export interface AppSettings {
   version: string;
   position: "right" | "center" | "left";
+  tray_click_action?: "center" | "panel";
   monitor: number;
   monitor_device: string;
   durations: Record<NotificationKind, number>;
@@ -143,6 +144,9 @@ export interface TrayBridge {
   on<T = unknown>(event: string, cb: (data: T) => void): () => void;
   setIgnoreMouse(ignore: boolean): void;
   hideSelf(): void;
+  showPanel?(): void;
+  togglePanel?(): void;
+  toggleCenter?(): void;
   pickFile(kind: "exe" | "font" | "audio"): Promise<string | null>;
   loginItem: {
     get(): Promise<boolean>;
