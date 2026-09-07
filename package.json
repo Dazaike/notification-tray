@@ -13,6 +13,7 @@
   },
   "build": {
     "appId": "com.kingm.notificationtray",
+    "productName": "Notification Tray",
     "publish": null,
     "files": [
       "dist-electron/**",
@@ -37,6 +38,17 @@
       "target": [
         "nsis"
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Notification Tray",
+      "uninstallDisplayName": "Notification Tray",
+      "runAfterFinish": true
     }
   },
   "devDependencies": {
