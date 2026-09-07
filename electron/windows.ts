@@ -18,6 +18,8 @@ export interface AppSettings {
   tray_click_action?: "center" | "panel";
   monitor: number;
   monitor_device: string;
+  /** When true, toast overlays are created on every connected display. */
+  multi_monitor?: boolean;
   durations: Record<string, number>;
   accent_color: string;
   font_path: string;
@@ -42,9 +44,15 @@ export interface AppSettings {
   anim_scale?: number;
 }
 
-let overlayWin: BrowserWindow | null = null;
+interface OverlayEntry {
+  displayId: number;
+  win: BrowserWindow;
+}
+
+let overlays: OverlayEntry[] = [];
 let centerWin: BrowserWindow | null = null;
 let panelWin: BrowserWindow | null = null;
+let cachedPreloadPath = "";
 
 let lastReadyData: unknown = null;
 
@@ -65,9 +73,14 @@ export function setAppQuitting(quitting: boolean): void {
 }
 
 export function updateState(settings: AppSettings, monitors?: CoreMonitor[]): void {
+  const prevMulti = Boolean(currentSettings?.multi_monitor);
   currentSettings = settings;
   if (monitors) {
     currentMonitors = monitors;
+  }
+  // Multi-monitor toggle or monitor target change needs overlay resync.
+  if (cachedPreloadPath && (prevMulti !== Boolean(settings.multi_monitor) || overlays.length > 0)) {
+    syncOverlayWindows();
   }
   repositionWindows();
 }
@@ -93,6 +106,13 @@ function resolveTargetDisplay(): Display {
   return screen.getPrimaryDisplay();
 }
 
+function resolveOverlayDisplays(): Display[] {
+  if (currentSettings?.multi_monitor) {
+    return screen.getAllDisplays();
+  }
+  return [resolveTargetDisplay()];
+}
+
 function loadSurface(win: BrowserWindow, surface: "overlay" | "center" | "panel"): void {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
@@ -103,38 +123,25 @@ function loadSurface(win: BrowserWindow, surface: "overlay" | "center" | "panel"
   }
 }
 
-export function repositionWindows(): void {
-  const target = resolveTargetDisplay();
-  const workArea = target.workArea;
-
-  if (overlayWin && !overlayWin.isDestroyed()) {
-    overlayWin.setBounds({
-      x: workArea.x,
-      y: workArea.y,
-      width: workArea.width,
-      height: workArea.height,
-    });
-  }
-
-  if (centerWin && !centerWin.isDestroyed()) {
-    const width = 440;
-    const height = Math.min(workArea.height - 48, 640);
-    const margin = 24;
-    const y = workArea.y + margin;
-    let x = workArea.x + workArea.width - width - margin;
-    if (currentSettings?.position === "left") {
-      x = workArea.x + margin;
+function wireRendererLifecycle(win: BrowserWindow): void {
+  win.webContents.on("did-finish-load", () => {
+    if (lastReadyData) {
+      win.webContents.send("core-event", "ready", lastReadyData);
     }
-    centerWin.setBounds({ x, y, width, height });
-  }
+    if (currentSettings) {
+      win.webContents.send("core-event", "settings", currentSettings);
+    }
+  });
+  win.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    if (level >= 2) {
+      console.warn(`[Renderer Err] ${message} (${sourceId}:${line})`);
+    }
+  });
 }
 
-export function createWindows(preloadPath: string): void {
-  const target = resolveTargetDisplay();
-  const workArea = target.workArea;
-
-  // 1. Overlay window
-  overlayWin = new BrowserWindow({
+function createOverlayWindow(display: Display, preloadPath: string): BrowserWindow {
+  const workArea = display.workArea;
+  const win = new BrowserWindow({
     x: workArea.x,
     y: workArea.y,
     width: workArea.width,
@@ -159,10 +166,94 @@ export function createWindows(preloadPath: string): void {
     },
   });
 
-  overlayWin.setAlwaysOnTop(true, "screen-saver");
-  overlayWin.setIgnoreMouseEvents(true, { forward: true });
-  loadSurface(overlayWin, "overlay");
-  overlayWin.show();
+  win.setAlwaysOnTop(true, "screen-saver");
+  win.setIgnoreMouseEvents(true, { forward: true });
+  wireRendererLifecycle(win);
+  loadSurface(win, "overlay");
+  win.showInactive();
+  return win;
+}
+
+/** Create/destroy/reposition toast overlays to match multi_monitor + display layout. */
+export function syncOverlayWindows(): void {
+  if (!cachedPreloadPath) return;
+
+  const wanted = resolveOverlayDisplays();
+  const wantedIds = new Set(wanted.map((d) => d.id));
+
+  // Drop overlays for disconnected / deselected displays.
+  const kept: OverlayEntry[] = [];
+  for (const entry of overlays) {
+    if (!wantedIds.has(entry.displayId) || entry.win.isDestroyed()) {
+      if (!entry.win.isDestroyed()) {
+        entry.win.destroy();
+      }
+      continue;
+    }
+    kept.push(entry);
+  }
+  overlays = kept;
+
+  const existingIds = new Set(overlays.map((e) => e.displayId));
+  for (const display of wanted) {
+    if (existingIds.has(display.id)) continue;
+    const win = createOverlayWindow(display, cachedPreloadPath);
+    overlays.push({ displayId: display.id, win });
+  }
+
+  // Reposition surviving overlays onto current work areas.
+  for (const entry of overlays) {
+    const display = wanted.find((d) => d.id === entry.displayId);
+    if (!display || entry.win.isDestroyed()) continue;
+    const workArea = display.workArea;
+    entry.win.setBounds({
+      x: workArea.x,
+      y: workArea.y,
+      width: workArea.width,
+      height: workArea.height,
+    });
+  }
+}
+
+export function repositionWindows(): void {
+  const target = resolveTargetDisplay();
+  const workArea = target.workArea;
+
+  syncOverlayWindows();
+
+  if (centerWin && !centerWin.isDestroyed()) {
+    const width = 440;
+    const height = Math.min(workArea.height - 48, 640);
+    const margin = 24;
+    const y = workArea.y + margin;
+    let x = workArea.x + workArea.width - width - margin;
+    if (currentSettings?.position === "left") {
+      x = workArea.x + margin;
+    }
+    centerWin.setBounds({ x, y, width, height });
+  }
+
+  if (panelWin && !panelWin.isDestroyed() && panelWin.isVisible()) {
+    // Keep panel on the selected monitor when it is already open.
+    const panelBounds = panelWin.getBounds();
+    const panelX = Math.round(workArea.x + (workArea.width - panelBounds.width) / 2);
+    const panelY = Math.round(workArea.y + (workArea.height - panelBounds.height) / 2);
+    panelWin.setBounds({
+      x: panelX,
+      y: panelY,
+      width: panelBounds.width,
+      height: panelBounds.height,
+    });
+  }
+}
+
+export function createWindows(preloadPath: string): void {
+  cachedPreloadPath = preloadPath;
+  const target = resolveTargetDisplay();
+  const workArea = target.workArea;
+
+  // 1. Overlay window(s) — one per display when multi_monitor is on
+  syncOverlayWindows();
 
   // 2. Center window
   const centerWidth = 440;
@@ -187,6 +278,7 @@ export function createWindows(preloadPath: string): void {
     backgroundColor: "#00000000",
     backgroundMaterial: "mica",
     roundedCorners: true,
+    icon: path.join(__dirname, "../resources/icon.png"),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -201,6 +293,7 @@ export function createWindows(preloadPath: string): void {
     }
   });
 
+  wireRendererLifecycle(centerWin);
   loadSurface(centerWin, "center");
 
   // 3. Panel window
@@ -220,6 +313,7 @@ export function createWindows(preloadPath: string): void {
     backgroundColor: "#00000000",
     backgroundMaterial: "mica",
     show: false,
+    icon: path.join(__dirname, "../resources/icon.png"),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -234,32 +328,26 @@ export function createWindows(preloadPath: string): void {
     }
   });
 
+  wireRendererLifecycle(panelWin);
   loadSurface(panelWin, "panel");
 
-  for (const w of [overlayWin, centerWin, panelWin]) {
-    if (!w) continue;
-    w.webContents.on("did-finish-load", () => {
-      if (lastReadyData) {
-        w.webContents.send("core-event", "ready", lastReadyData);
-      }
-      if (currentSettings) {
-        w.webContents.send("core-event", "settings", currentSettings);
-      }
-    });
-    w.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-      if (level >= 2) {
-        console.warn(`[Renderer Err] ${message} (${sourceId}:${line})`);
-      }
-    });
-  }
-  // Display change listeners
+  // Display change listeners — recreate overlays when layout changes
+  screen.removeAllListeners("display-added");
+  screen.removeAllListeners("display-removed");
+  screen.removeAllListeners("display-metrics-changed");
   screen.on("display-added", () => repositionWindows());
   screen.on("display-removed", () => repositionWindows());
   screen.on("display-metrics-changed", () => repositionWindows());
 }
 
+/** First overlay (compat). Prefer getOverlayWindows for multi-monitor. */
 export function getOverlayWindow(): BrowserWindow | null {
-  return overlayWin;
+  const live = overlays.find((e) => !e.win.isDestroyed());
+  return live?.win ?? null;
+}
+
+export function getOverlayWindows(): BrowserWindow[] {
+  return overlays.map((e) => e.win).filter((w) => !w.isDestroyed());
 }
 
 export function getCenterWindow(): BrowserWindow | null {
@@ -287,6 +375,7 @@ export function showPanelWindow(): void {
   panelWin.show();
   panelWin.focus();
 }
+
 export function togglePanelWindow(): void {
   if (!panelWin || panelWin.isDestroyed()) return;
   if (panelWin.isVisible() && !panelWin.isMinimized()) {
@@ -307,9 +396,26 @@ export function handleTrayClick(): void {
   }
 }
 
-
 export function getAllWindows(): BrowserWindow[] {
-  return [overlayWin, centerWin, panelWin].filter(
+  return [...getOverlayWindows(), centerWin, panelWin].filter(
     (w): w is BrowserWindow => w !== null && !w.isDestroyed()
   );
+}
+
+/** Force click-through on every toast overlay (after activate / clear). */
+export function setAllOverlaysIgnoreMouse(ignore: boolean): void {
+  for (const win of getOverlayWindows()) {
+    win.setIgnoreMouseEvents(ignore, { forward: true });
+  }
+}
+
+/** Relay dismiss/activate so mirrored toasts stay in sync across monitors. */
+export function broadcastOverlaySync(
+  sender: Electron.WebContents,
+  payload: { type: "dismiss" | "activate"; key: string }
+): void {
+  for (const win of getOverlayWindows()) {
+    if (win.isDestroyed() || win.webContents.id === sender.id) continue;
+    win.webContents.send("core-event", "overlay-sync", payload);
+  }
 }

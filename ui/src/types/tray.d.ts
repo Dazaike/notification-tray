@@ -96,6 +96,8 @@ export interface AppSettings {
   tray_click_action?: "center" | "panel";
   monitor: number;
   monitor_device: string;
+  multi_monitor?: boolean;
+
   durations: Record<NotificationKind, number>;
   accent_color: string;
   font_path: string;
@@ -143,6 +145,8 @@ export interface TrayBridge {
   request<T = unknown>(op: string, args?: Record<string, unknown>): Promise<T>;
   on<T = unknown>(event: string, cb: (data: T) => void): () => void;
   setIgnoreMouse(ignore: boolean): void;
+  syncOverlay?(payload: { type: "dismiss" | "activate"; key: string }): void;
+
   hideSelf(): void;
   showPanel?(): void;
   togglePanel?(): void;

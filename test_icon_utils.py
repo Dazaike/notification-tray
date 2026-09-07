@@ -54,6 +54,30 @@ class IconContrastTests(unittest.TestCase):
         pixel = adapted.getpixel((20, 20))
         self.assertEqual(pixel, (240, 240, 240, 255))
 
+    def test_prepare_icon_downscales_large_source(self):
+        im = Image.new("RGBA", (256, 256), (10, 20, 30, 255))
+        out = app_utils.prepare_icon_for_cache(im, 128)
+        self.assertIsNotNone(out)
+        self.assertEqual(out.size, (128, 128))
+        self.assertEqual(out.getpixel((64, 64))[:3], (10, 20, 30))
+
+    def test_prepare_icon_pads_non_square(self):
+        im = Image.new("RGBA", (200, 100), (0, 0, 0, 0))
+        for x in range(200):
+            for y in range(100):
+                im.putpixel((x, y), (255, 0, 0, 255))
+        out = app_utils.prepare_icon_for_cache(im, 128)
+        self.assertEqual(out.size, (128, 128))
+        # Transparent padding remains on the letterbox edges
+        self.assertEqual(out.getpixel((64, 0))[3], 0)
+
+    def test_prepare_icon_keeps_tiny_source_for_refetch(self):
+        im = Image.new("RGBA", (48, 48), (1, 2, 3, 255))
+        out = app_utils.prepare_icon_for_cache(im, 128)
+        self.assertEqual(out.size, (48, 48))
+
+
+
     def test_find_exe_by_aumid_or_app_name(self):
         # Test known AUMID mapping for Equibop
         exe_by_name = app_utils.find_exe_for_app("equibop")

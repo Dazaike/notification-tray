@@ -1,6 +1,6 @@
 {
   "name": "notification-tray",
-  "version": "2.0.13",
+  "version": "2.0.14",
   "author": "kingm",
   "description": "Modern Windows 11 notification tray on Electron + React + Kokonut UI + Motion",
   "main": "dist-electron/main.js",
@@ -8,7 +8,7 @@
     "dev": "concurrently \"vite --config ui/vite.config.ts\" \"tsc -p electron && electron .\"",
     "build:ui": "vite build --config ui/vite.config.ts",
     "build:electron": "tsc -p electron",
-    "build:core": "pyinstaller --noconfirm --onedir --console --name core --workpath build/pyi --distpath build --add-data \"fears-to-fathom-notification.mp3;.\" core_service.py",
+    "build:core": "pyinstaller --noconfirm --onedir --console --name core --workpath build/pyi --distpath build --add-data \"fears-to-fathom-notification.mp3;.\" --add-data \"resources;resources\" core_service.py",
     "build": "npm run build:ui && npm run build:electron && npm run build:core && electron-builder --publish never"
   },
   "build": {
@@ -32,9 +32,22 @@
       {
         "from": "fears-to-fathom-notification.mp3",
         "to": "core/fears-to-fathom-notification.mp3"
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "resources/icon.png"
+      },
+      {
+        "from": "resources/icon.ico",
+        "to": "resources/icon.ico"
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "core/resources/icon.png"
       }
     ],
     "win": {
+      "icon": "resources/icon.ico",
       "target": [
         "nsis"
       ]

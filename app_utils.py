@@ -121,8 +121,38 @@ def adapt_icon_for_dark_theme(im):
     except Exception:
         return im
 
+def prepare_icon_for_cache(im, size: int = 128):
+    """Normalize an icon to a square RGBA PNG-ready image at `size` px.
 
-def extract_exe_icon(exe_path: str, size: int = 48):
+    Pads non-square sources, downscales with LANCZOS when larger, and leaves
+    smaller sources alone (caller should re-fetch those when possible).
+    Applies dark-theme contrast adaptation last.
+    """
+    if im is None:
+        return None
+    try:
+        from PIL import Image
+
+        im = im.convert("RGBA")
+        w, h = im.size
+        if w != h:
+            side = max(w, h)
+            canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+            canvas.paste(im, ((side - w) // 2, (side - h) // 2), im)
+            im = canvas
+        if im.size[0] > size:
+            im = im.resize((size, size), Image.Resampling.LANCZOS)
+        elif im.size[0] < size and im.size[0] >= size * 0.75:
+            # Near-target sources (e.g. 100–127) snap cleanly; tiny sources
+            # stay as-is so callers can detect undersize and re-fetch.
+            im = im.resize((size, size), Image.Resampling.LANCZOS)
+        return adapt_icon_for_dark_theme(im)
+    except Exception:
+        return adapt_icon_for_dark_theme(im) if im is not None else None
+
+
+
+def extract_exe_icon(exe_path: str, size: int = 128):
     """Best-effort: extract the embedded icon from an .exe as a PIL Image,
     resized to (size, size). Returns None on failure."""
     try:

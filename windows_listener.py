@@ -128,6 +128,17 @@ def format_notification_texts(texts: list[str], app_name: str = "Windows") -> tu
     return title, message
 
 
+
+def _icon_cache_is_crisp(cache_path: Path) -> bool:
+    """True when a cached PNG is large enough for HiDPI toast rendering."""
+    try:
+        from PIL import Image
+
+        with Image.open(cache_path) as im:
+            return min(im.size) >= config.ICON_CACHE_MIN_SIZE
+    except Exception:
+        return False
+
 async def _get_app_icon(app_info, aumid, app_name=""):
     """Best-effort fetch of the source app's logo/icon, cached to disk.
     Returns a file path, or "" if unavailable."""
@@ -136,10 +147,11 @@ async def _get_app_icon(app_info, aumid, app_name=""):
 
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", aumid)
     cache_path = config.ICON_CACHE_DIR / f"{safe}.png"
-    if cache_path.exists():
+    if cache_path.exists() and _icon_cache_is_crisp(cache_path):
         try:
             from PIL import Image
             from app_utils import adapt_icon_for_dark_theme
+
             im = Image.open(cache_path)
             adapted = adapt_icon_for_dark_theme(im)
             if adapted is not im:
@@ -148,12 +160,26 @@ async def _get_app_icon(app_info, aumid, app_name=""):
             pass
         return str(cache_path)
 
+    # Stale low-res cache (legacy 48px) — drop and re-fetch at HiDPI size.
+    if cache_path.exists():
+        try:
+            cache_path.unlink()
+        except Exception:
+            pass
+
+    target = config.ICON_CACHE_SIZE
+
     if app_info is not None:
         try:
             from winsdk.windows.foundation import Size
             from winsdk.windows.storage.streams import DataReader
 
-            logo_ref = app_info.display_info.get_logo(Size(48, 48))
+            # Request 256 so packaged apps hand back their largest logo asset;
+            # we downscale to ICON_CACHE_SIZE with LANCZOS for the disk cache.
+            logo_ref = app_info.display_info.get_logo(Size(256.0, 256.0))
+            if logo_ref is None:
+                logo_ref = app_info.display_info.get_logo(Size(float(target), float(target)))
+
             if logo_ref is not None:
                 stream = await logo_ref.open_read_async()
                 size = stream.size
@@ -168,38 +194,60 @@ async def _get_app_icon(app_info, aumid, app_name=""):
                     try:
                         import io
                         from PIL import Image
-                        from app_utils import adapt_icon_for_dark_theme
+                        from app_utils import prepare_icon_for_cache
+
                         im = Image.open(io.BytesIO(data))
-                        adapted = adapt_icon_for_dark_theme(im)
-                        adapted.save(cache_path)
+                        prepared = prepare_icon_for_cache(im, target)
+                        if prepared is not None and min(prepared.size) >= config.ICON_CACHE_MIN_SIZE:
+                            prepared.save(cache_path)
+                            return str(cache_path)
+                        # Logo came back tiny — keep raw bytes only if nothing better.
+                        if prepared is not None:
+                            prepared.save(cache_path)
+                        else:
+                            with open(cache_path, "wb") as f:
+                                f.write(data)
                     except Exception:
                         with open(cache_path, "wb") as f:
                             f.write(data)
-                    return str(cache_path)
+                    # Fall through to exe extraction if still undersized.
+                    if _icon_cache_is_crisp(cache_path):
+                        return str(cache_path)
         except Exception:
             pass
     # Fall back to extracting the icon from the source app's .exe — many
     # win32 apps don't expose a logo via the toast API. WMI lookups and
     # icon extraction are blocking, so run them off the event loop.
     def _extract():
+        from app_utils import prepare_icon_for_cache
+
         exe_path = find_exe_for_app(app_name, aumid=aumid)
         if not exe_path:
             return None
-        return extract_exe_icon(exe_path, 48)
+        # Pull the largest available glyph, then normalize to cache size.
+        img = extract_exe_icon(exe_path, target)
+        return prepare_icon_for_cache(img, target) if img is not None else None
+
     try:
         loop = asyncio.get_running_loop()
         # Cap the WMI / icon-extraction fallback so a stuck query can't
         # hang the listener indefinitely.
         img = await asyncio.wait_for(loop.run_in_executor(None, _extract), timeout=5.0)
         if img is None:
+            # Keep any partial WinRT logo we already wrote; better than nothing.
+            if cache_path.exists():
+                return str(cache_path)
             _ICON_MISSES.add(aumid)
             return ""
         config.ICON_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         img.save(cache_path)
         return str(cache_path)
     except Exception:
+        if cache_path.exists():
+            return str(cache_path)
         _ICON_MISSES.add(aumid)
         return ""
+
 
 
 async def _listen(manager):

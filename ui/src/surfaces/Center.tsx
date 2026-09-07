@@ -38,9 +38,11 @@ function NotificationIcon({ iconPath, kind }: { iconPath?: string; kind: Notific
         <img
           src={`res:///${iconPath!.replace(/\\/g, "/")}`}
           alt=""
-          className="w-full h-full object-contain rounded-icon"
+          draggable={false}
+          className="w-full h-full object-contain rounded-icon [image-rendering:auto] [transform:translateZ(0)]"
           onError={() => setFailed(true)}
         />
+
       ) : (
         getKindIcon(kind)
       )}
@@ -51,11 +53,13 @@ export const Center: React.FC = () => {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [search, setSearch] = useState("");
   const [settings, setSettings] = useState<AppSettings>({
-    version: "2.0.13",
+    version: "2.0.14",
     position: "right",
     monitor: 0,
     tray_click_action: "center",
     monitor_device: "",
+    multi_monitor: false,
+
     durations: { info: 5000, success: 5000, warning: 5000, error: 5000 },
     accent_color: "#4f98a3",
     font_path: "",
@@ -194,11 +198,19 @@ export const Center: React.FC = () => {
         style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
         className="flex items-center justify-between gap-3 mb-3 shrink-0 cursor-move"
       >
-        <div className="pointer-events-none">
-          <h1 className="text-sm font-semibold text-fg tracking-tight">Notifications</h1>
-          <p className="text-[11px] text-muted">
-            {history.length} {history.length === 1 ? "notification" : "notifications"}
-          </p>
+        <div className="flex items-center gap-2.5 pointer-events-none">
+          <img
+            src="/icon.png"
+            alt=""
+            draggable={false}
+            className="w-7 h-7 rounded-lg object-contain border border-border/40 shadow-sm"
+          />
+          <div>
+            <h1 className="text-sm font-semibold text-fg tracking-tight">Notifications</h1>
+            <p className="text-[11px] text-muted">
+              {history.length} {history.length === 1 ? "notification" : "notifications"}
+            </p>
+          </div>
         </div>
         <div
           className="flex items-center gap-2"

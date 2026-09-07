@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-__version__ = "2.0.13"
+__version__ = "2.0.14"
 KINDS = ("info", "success", "warning", "error")
 DURATION_MS = 5000
 MIN_TOAST_ALPHA = 0.6
@@ -18,8 +18,13 @@ DEFAULT_POSITION = "right"
 DEFAULT_TRAY_CLICK_ACTION = "center"
 DEFAULT_MONITOR = 0
 DEFAULT_FONT_PATH = ""
+DEFAULT_MULTI_MONITOR = False
+
 DEFAULT_ACCENT = "#4f98a3"
 ICON_CACHE_DIR = Path.home() / ".notif_tray_icons"
+ICON_CACHE_SIZE = 128  # CSS toast icon is ~38px; 128 covers 3x DPI + toast zoom
+ICON_CACHE_MIN_SIZE = 96  # re-fetch cached icons smaller than this (legacy 48px)
+
 CONFIG_PATH = Path.home() / ".notif_tray_config.json"
 DEFAULT_CUSTOM_SOUND_PATH = ""
 DEFAULT_ANIMATION_PRESET = "default"

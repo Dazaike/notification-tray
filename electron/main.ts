@@ -4,10 +4,12 @@ import { app, BrowserWindow, dialog, ipcMain, net, protocol } from "electron";
 import { onCoreEvent, request, startCore, stopCore } from "./core";
 import { createTray, refreshTrayIcon, updateUnreadCount } from "./tray";
 import {
+  broadcastOverlaySync,
   createWindows,
   getAllWindows,
-  getOverlayWindow,
+  getOverlayWindows,
   handleTrayClick,
+  setAllOverlaysIgnoreMouse,
   setAppQuitting,
   setReadyData,
   showPanelWindow,
@@ -17,6 +19,7 @@ import {
   type AppSettings,
   type CoreMonitor,
 } from "./windows";
+
 
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -77,27 +80,29 @@ app.whenReady().then(async () => {
   });
 
   // Setup IPC handlers
-  let lastIgnoreMouse = true;
   ipcMain.handle("core", async (_event, op: string, args: Record<string, unknown> = {}) => {
     if (op === "activate" || op === "clearHistory" || op === "dismissHistory") {
-      lastIgnoreMouse = true;
-      const overlay = getOverlayWindow();
-      if (overlay && !overlay.isDestroyed()) {
-        overlay.setIgnoreMouseEvents(true, { forward: true });
-      }
+      setAllOverlaysIgnoreMouse(true);
     }
     return request(op, args);
   });
 
-  ipcMain.on("set-ignore-mouse", (_event, ignore: boolean) => {
-    const overlay = getOverlayWindow();
-    if (overlay && !overlay.isDestroyed()) {
-      if (lastIgnoreMouse !== ignore) {
-        lastIgnoreMouse = ignore;
-        overlay.setIgnoreMouseEvents(ignore, { forward: true });
-      }
+  // Per-window click-through so hovering a toast on one monitor does not
+  // steal mouse input from the other overlays.
+  ipcMain.on("set-ignore-mouse", (event, ignore: boolean) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed() && getOverlayWindows().includes(win)) {
+      win.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
     }
   });
+
+  ipcMain.on("overlay-sync", (event, payload: { type: "dismiss" | "activate"; key: string }) => {
+    if (!payload || (payload.type !== "dismiss" && payload.type !== "activate") || !payload.key) {
+      return;
+    }
+    broadcastOverlaySync(event.sender, payload);
+  });
+
 
   ipcMain.on("hide-self", (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);

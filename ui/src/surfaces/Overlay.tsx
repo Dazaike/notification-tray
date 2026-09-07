@@ -185,9 +185,11 @@ const ToastCard: React.FC<ToastCardProps> = ({
                 <img
                   src={`res:///${toast.iconPath.replace(/\\/g, "/")}`}
                   alt=""
-                  className="w-full h-full object-contain rounded-icon"
+                  draggable={false}
+                  className="w-full h-full object-contain rounded-icon [image-rendering:auto] [transform:translateZ(0)]"
                   onError={() => setIconFailed(true)}
                 />
+
               ) : (
                 getKindIcon(toast.kind)
               )}
@@ -262,11 +264,13 @@ const ToastCard: React.FC<ToastCardProps> = ({
 export const Overlay: React.FC = () => {
   const [toasts, setToasts] = useState<LiveToast[]>([]);
   const [settings, setSettings] = useState<AppSettings>({
-    version: "2.0.13",
+    version: "2.0.14",
     position: "right",
     monitor: 0,
     tray_click_action: "center",
     monitor_device: "",
+    multi_monitor: false,
+
     durations: { info: 5000, success: 5000, warning: 5000, error: 5000 },
     accent_color: "#4f98a3",
     font_path: "",
@@ -389,16 +393,28 @@ export const Overlay: React.FC = () => {
       });
     });
 
+    const unsubSync = window.tray.on<{ type: "dismiss" | "activate"; key: string }>(
+      "overlay-sync",
+      (payload) => {
+        if (!payload?.key) return;
+        setToasts((prev) => prev.filter((t) => t.key !== payload.key));
+        updateIgnoreMouse(true);
+      }
+    );
+
     return () => {
       unsubSettings();
       unsubReady();
       unsubToast();
+      unsubSync();
     };
-  }, []);
+  }, [updateIgnoreMouse]);
+
 
   const handleDismiss = useCallback((key: string) => {
     updateIgnoreMouse(true);
     setToasts((prev) => prev.filter((t) => t.key !== key));
+    window.tray?.syncOverlay?.({ type: "dismiss", key });
     setTimeout(() => {
       if (mousePosRef.current) {
         const el = document.elementFromPoint(mousePosRef.current.x, mousePosRef.current.y);
@@ -412,6 +428,7 @@ export const Overlay: React.FC = () => {
   const handleActivate = useCallback((toast: LiveToast) => {
     updateIgnoreMouse(true);
     window.tray?.request("activate", { ids: toast.ids }).catch(() => {});
+    window.tray?.syncOverlay?.({ type: "activate", key: toast.key });
     setToasts((prev) => prev.filter((t) => t.key !== toast.key));
     setTimeout(() => {
       if (mousePosRef.current) {
@@ -422,6 +439,7 @@ export const Overlay: React.FC = () => {
       }
     }, 50);
   }, [updateIgnoreMouse]);
+
 
   // Stack positioning
   const positionClass =

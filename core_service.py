@@ -143,6 +143,10 @@ def main() -> None:
                 elif key == "monitor_device":
                     manager.set_monitor(manager.monitor, value)
                     ok = True
+                elif key == "multi_monitor":
+                    manager.set_multi_monitor(bool(value))
+                    ok = True
+
                 elif key.startswith("duration."):
                     kind = key.split(".", 1)[1]
                     manager.set_duration(kind, value)

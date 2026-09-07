@@ -95,11 +95,13 @@ export const Panel: React.FC = () => {
 
   const [sandboxVisible, setSandboxVisible] = useState(true);
   const [settings, setSettings] = useState<AppSettings>({
-    version: "2.0.13",
+    version: "2.0.14",
     position: "right",
     monitor: 0,
     tray_click_action: "center",
     monitor_device: "",
+    multi_monitor: false,
+
     durations: { info: 5000, success: 5000, warning: 5000, error: 5000 },
     accent_color: "#4f98a3",
     font_path: "",
@@ -397,12 +399,15 @@ export const Panel: React.FC = () => {
         className="flex items-center justify-between gap-4 pb-3 border-b border-border/70 shrink-0 cursor-move"
       >
         <div className="flex items-center gap-2.5 pointer-events-none">
-          <div className="w-8 h-8 rounded-lg bg-[var(--accent-soft)] flex items-center justify-center border border-[var(--accent)]/30">
-            <Sliders className="w-4 h-4 text-[var(--accent)]" />
-          </div>
+          <img
+            src="/icon.png"
+            alt=""
+            draggable={false}
+            className="w-8 h-8 rounded-lg object-contain border border-border/40 shadow-sm"
+          />
           <div>
             <h1 className="text-sm font-semibold tracking-tight">Notification Settings</h1>
-            <p className="text-[10px] text-muted">Version {settings.version || "2.0.13"}</p>
+            <p className="text-[10px] text-muted">Version {settings.version || "2.0.14"}</p>
           </div>
         </div>
 
@@ -458,8 +463,28 @@ export const Panel: React.FC = () => {
 
               {/* Monitor */}
               <SpotlightCard>
-                <h3 className="text-xs font-semibold text-fg mb-2">Display Monitor</h3>
-                <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <h3 className="text-xs font-semibold text-fg">Display Monitor</h3>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-muted">All monitors</span>
+                    <Switch
+                      checked={Boolean(settings.multi_monitor)}
+                      onCheckedChange={(v) => updateSetting("multi_monitor", v)}
+                    />
+                  </div>
+                </div>
+                {settings.multi_monitor ? (
+                  <p className="text-[11px] text-muted leading-relaxed">
+                    Toasts mirror on every connected display. Notification Center and
+                    Settings still open on the display selected below.
+                  </p>
+                ) : null}
+                <div
+                  className={cn(
+                    "space-y-1.5",
+                    settings.multi_monitor ? "mt-2.5 opacity-70" : ""
+                  )}
+                >
                   {monitors.length === 0 ? (
                     <div className="text-xs text-muted">Enumerating displays...</div>
                   ) : (
@@ -495,6 +520,7 @@ export const Panel: React.FC = () => {
                   )}
                 </div>
               </SpotlightCard>
+
 
               {/* Accent Color */}
               <SpotlightCard>

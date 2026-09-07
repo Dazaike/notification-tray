@@ -1,3 +1,4 @@
+import path from "node:path";
 import { app, Menu, nativeImage, screen, Tray } from "electron";
 import { request } from "./core";
 import { handleTrayClick, showPanelWindow, toggleCenterWindow } from "./windows";
@@ -29,9 +30,9 @@ export function updateUnreadCount(count: number): void {
 export function createTray(onQuit: () => void): Tray {
   onQuitCallback = onQuit;
 
-  // Create with empty transparent 16x16 image initially
-  const initialImg = nativeImage.createEmpty();
-  tray = new Tray(initialImg);
+  const defaultIconPath = path.join(__dirname, "../resources/icon.png");
+  const initialImg = nativeImage.createFromPath(defaultIconPath);
+  tray = new Tray(initialImg.isEmpty() ? nativeImage.createEmpty() : initialImg);
   tray.setToolTip("Notification Tray");
 
   const contextMenu = Menu.buildFromTemplate([
@@ -58,6 +59,7 @@ export function createTray(onQuit: () => void): Tray {
           title: "Notification Tray",
           kind: "info",
           app_name: "Notification Tray",
+          icon_path: path.join(__dirname, "../resources/icon.png"),
         }).catch((err) => console.error("[tray] Send test notification error:", err));
       },
     },

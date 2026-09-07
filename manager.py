@@ -34,6 +34,8 @@ class NotificationManager:
         self.tray_click_action = config.DEFAULT_TRAY_CLICK_ACTION
         self.monitor = config.DEFAULT_MONITOR
         self.monitor_device = ""
+        self.multi_monitor = config.DEFAULT_MULTI_MONITOR
+
         self.durations = {kind: config.DURATION_MS for kind in config.KINDS}
         self.accent_color = config.DEFAULT_ACCENT
         self.font_path = config.DEFAULT_FONT_PATH
@@ -307,6 +309,13 @@ class NotificationManager:
         if self.on_settings_change:
             self.on_settings_change()
 
+    def set_multi_monitor(self, enabled: bool) -> None:
+        self.multi_monitor = bool(enabled)
+        self.save_settings()
+        if self.on_settings_change:
+            self.on_settings_change()
+
+
     def duration_for(self, kind: str) -> int:
         return int(self.durations.get(kind if kind in config.KINDS else "info", config.DURATION_MS))
 
@@ -521,6 +530,8 @@ class NotificationManager:
                 "tray_click_action": self.tray_click_action,
                 "monitor": self.monitor,
                 "monitor_device": self.monitor_device,
+                "multi_monitor": self.multi_monitor,
+
                 "durations": dict(self.durations),
                 "accent_color": self.accent_color,
                 "font_path": self.font_path,
@@ -574,6 +585,8 @@ class NotificationManager:
         else:
             self.monitor = config.DEFAULT_MONITOR
             self.monitor_device = device_for_index(self.monitor)
+        self.multi_monitor = bool(data.get("multi_monitor", self.multi_monitor))
+
 
         stored = data.get("durations")
         if isinstance(stored, dict):
@@ -684,6 +697,8 @@ class NotificationManager:
                 "tray_click_action": self.tray_click_action,
                 "monitor": self.monitor,
                 "monitor_device": self.monitor_device,
+                "multi_monitor": self.multi_monitor,
+
                 "durations": dict(self.durations),
                 "accent_color": self.accent_color,
                 "font_path": self.font_path,
