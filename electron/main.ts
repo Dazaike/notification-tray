@@ -1,6 +1,6 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, net, protocol } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, net, powerMonitor, protocol } from "electron";
 import { onCoreEvent, request, startCore, stopCore } from "./core";
 import { createTray, refreshTrayIcon, updateUnreadCount } from "./tray";
 import {
@@ -9,6 +9,7 @@ import {
   getAllWindows,
   getOverlayWindows,
   handleTrayClick,
+  reassertOverlaysOnTop,
   setAllOverlaysIgnoreMouse,
   setAppQuitting,
   setReadyData,
@@ -181,6 +182,18 @@ app.whenReady().then(async () => {
       refreshTrayIcon().catch(() => {});
     }
   });
+
+  // Re-assert overlay topmost right before a toast renders. Windows can
+  // silently sink a topmost layered window out of the z-order band with no
+  // notifying event, so this is the cheapest reliable place to recover it.
+  onCoreEvent("toast", () => {
+    reassertOverlaysOnTop();
+  });
+
+  // Session resume/unlock is a common trigger for the OS losing track of a
+  // topmost window's z-order; re-assert as a safety net.
+  powerMonitor.on("resume", () => reassertOverlaysOnTop());
+  powerMonitor.on("unlock-screen", () => reassertOverlaysOnTop());
 
   // Start Python core service and await ready event
   const preloadPath = path.join(__dirname, "preload.js");

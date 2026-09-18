@@ -409,6 +409,21 @@ export function setAllOverlaysIgnoreMouse(ignore: boolean): void {
   }
 }
 
+/**
+ * Windows can silently drop a topmost layered window out of the topmost
+ * z-order band (UAC prompts, other topmost apps, fullscreen toggles, screen
+ * lock/unlock, display/GPU resets) without firing any Electron event. When
+ * that happens the overlay is still alive, just sunk behind other windows.
+ * Re-assert topmost + raise right before showing a toast and on session
+ * resume so the overlay never needs a manual app restart to recover.
+ */
+export function reassertOverlaysOnTop(): void {
+  for (const win of getOverlayWindows()) {
+    win.setAlwaysOnTop(true, "screen-saver");
+    win.moveTop();
+  }
+}
+
 /** Relay dismiss/activate so mirrored toasts stay in sync across monitors. */
 export function broadcastOverlaySync(
   sender: Electron.WebContents,
