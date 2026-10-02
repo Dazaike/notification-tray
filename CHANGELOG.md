@@ -3,6 +3,19 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.16] - 2026-10-01
+
+### Fixed
+- High idle CPU/GPU use (~5% CPU, GPU 3D activity with no toast showing). The
+  full-work-area, always-on-top, transparent overlay window was shown from
+  startup and used `setIgnoreMouseEvents(true, { forward: true })`, so Windows
+  forwarded every global mouse move to the renderer and DWM composited the
+  window continuously. Overlays are now created hidden, shown on the core
+  `"toast"` event (`showOverlays()`), and hidden again 1 s after the renderer
+  reports no live toasts (`setOverlayActive()`), via a new `overlay-active` IPC
+  channel (`electron/windows.ts`, `electron/main.ts`, `electron/preload.ts`,
+  `ui/src/surfaces/Overlay.tsx`, `ui/src/types/tray.d.ts`).
+
 ## [v2.0.15] - 2026-09-18
 
 ### Fixed
@@ -24,3 +37,4 @@ No changelog history was tracked prior to v2.0.15; see `git log` for commit
 history before this point.
 
 [v2.0.15]: https://github.com/Dazaike/notification-tray/compare/v2.0.14...v2.0.15
+[v2.0.16]: https://github.com/Dazaike/notification-tray/compare/v2.0.15...v2.0.16

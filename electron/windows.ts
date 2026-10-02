@@ -170,7 +170,8 @@ function createOverlayWindow(display: Display, preloadPath: string): BrowserWind
   win.setIgnoreMouseEvents(true, { forward: true });
   wireRendererLifecycle(win);
   loadSurface(win, "overlay");
-  win.showInactive();
+  // Stays hidden until a toast arrives: an idle full-screen topmost transparent
+  // window costs a DWM composition layer plus a global forwarded-mouse hook.
   return win;
 }
 
@@ -422,6 +423,44 @@ export function reassertOverlaysOnTop(): void {
     win.setAlwaysOnTop(true, "screen-saver");
     win.moveTop();
   }
+}
+
+const OVERLAY_HIDE_DELAY_MS = 1000; // let exit animations finish
+const overlayHideTimers = new Map<number, NodeJS.Timeout>();
+
+function cancelOverlayHide(win: BrowserWindow): void {
+  const t = overlayHideTimers.get(win.id);
+  if (t) {
+    clearTimeout(t);
+    overlayHideTimers.delete(win.id);
+  }
+}
+
+/** Show every overlay without stealing focus (called when a toast arrives). */
+export function showOverlays(): void {
+  for (const win of getOverlayWindows()) {
+    cancelOverlayHide(win);
+    if (!win.isVisible()) win.showInactive();
+  }
+}
+
+/** Renderer reports whether it still has toasts; hide when idle. */
+export function setOverlayActive(win: BrowserWindow, active: boolean): void {
+  if (win.isDestroyed()) return;
+  cancelOverlayHide(win);
+  if (active) {
+    if (!win.isVisible()) win.showInactive();
+    return;
+  }
+  overlayHideTimers.set(
+    win.id,
+    setTimeout(() => {
+      overlayHideTimers.delete(win.id);
+      if (win.isDestroyed()) return;
+      win.setIgnoreMouseEvents(true, { forward: true });
+      win.hide();
+    }, OVERLAY_HIDE_DELAY_MS)
+  );
 }
 
 /** Relay dismiss/activate so mirrored toasts stay in sync across monitors. */

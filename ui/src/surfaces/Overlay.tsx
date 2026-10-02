@@ -295,10 +295,14 @@ export const Overlay: React.FC = () => {
     }
   }, []);
 
-  // When no toasts exist, overlay must always be click-through
+  // When no toasts exist, overlay must be click-through and main hides the window
+  const wasActiveRef = useRef(false);
   useEffect(() => {
-    if (toasts.length === 0) {
-      updateIgnoreMouse(true);
+    const active = toasts.length > 0;
+    if (!active) updateIgnoreMouse(true);
+    if (active !== wasActiveRef.current) {
+      wasActiveRef.current = active;
+      window.tray?.setOverlayActive(active);
     }
   }, [toasts.length, updateIgnoreMouse]);
 

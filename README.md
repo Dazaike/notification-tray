@@ -1,4 +1,4 @@
-# Windows Notification Tray (v2.0.15)
+# Windows Notification Tray (v2.0.16)
 
 A modern, fluid Windows 11 notification tray built on **Electron**, **React 19**, **Tailwind CSS v4**, **Kokonut UI**, and **Motion**.
 

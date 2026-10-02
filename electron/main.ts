@@ -14,6 +14,8 @@ import {
   setAppQuitting,
   setReadyData,
   showPanelWindow,
+  setOverlayActive,
+  showOverlays,
   toggleCenterWindow,
   togglePanelWindow,
   updateState,
@@ -94,6 +96,13 @@ app.whenReady().then(async () => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed() && getOverlayWindows().includes(win)) {
       win.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
+    }
+  });
+
+  ipcMain.on("overlay-active", (event, active: boolean) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && getOverlayWindows().includes(win)) {
+      setOverlayActive(win, Boolean(active));
     }
   });
 
@@ -187,6 +196,7 @@ app.whenReady().then(async () => {
   // silently sink a topmost layered window out of the z-order band with no
   // notifying event, so this is the cheapest reliable place to recover it.
   onCoreEvent("toast", () => {
+    showOverlays();
     reassertOverlaysOnTop();
   });
 

@@ -145,6 +145,7 @@ export interface TrayBridge {
   request<T = unknown>(op: string, args?: Record<string, unknown>): Promise<T>;
   on<T = unknown>(event: string, cb: (data: T) => void): () => void;
   setIgnoreMouse(ignore: boolean): void;
+  setOverlayActive(active: boolean): void;
   syncOverlay?(payload: { type: "dismiss" | "activate"; key: string }): void;
 
   hideSelf(): void;

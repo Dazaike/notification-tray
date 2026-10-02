@@ -22,6 +22,10 @@ contextBridge.exposeInMainWorld("tray", {
   setIgnoreMouse(ignore: boolean): void {
     ipcRenderer.send("set-ignore-mouse", ignore);
   },
+  /** Tell main whether this overlay has live toasts so it can hide when idle. */
+  setOverlayActive(active: boolean): void {
+    ipcRenderer.send("overlay-active", active);
+  },
   /** Mirror dismiss/activate across multi-monitor toast overlays. */
   syncOverlay(payload: { type: "dismiss" | "activate"; key: string }): void {
     ipcRenderer.send("overlay-sync", payload);
