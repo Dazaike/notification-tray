@@ -204,7 +204,7 @@ export interface ResolvedAnimationConfig {
   scale: number; // scale factor
 }
 
-export function resolveAnimationConfig(settings: AppSettings): ResolvedAnimationConfig {
+function resolveAnimationConfig(settings: AppSettings): ResolvedAnimationConfig {
   const presetId = settings.animation_preset || "default";
   const matchedPreset = ANIMATION_PRESETS.find((p) => p.id === presetId);
 
@@ -247,7 +247,7 @@ function resolveVector(
   return { x: distance, y: 0 };
 }
 
-export function buildTransition(
+function buildTransition(
   easing: AnimationEasing,
   durationMs: number,
   bounce: number,

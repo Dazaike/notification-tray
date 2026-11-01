@@ -59,5 +59,5 @@ def resource_path(name: str) -> Path:
             return c
     return candidates[0]
 
-_SOUND_FILE = resource_path("fears-to-fathom-notification.mp3")
-NOTIFICATION_SOUND = str(_SOUND_FILE) if _SOUND_FILE.exists() else ""
+_sound = resource_path("fears-to-fathom-notification.mp3")
+NOTIFICATION_SOUND = str(_sound) if _sound.exists() else ""

@@ -3,6 +3,18 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.17] - 2026-11-01
+
+### Removed
+- Unused debug script `capture_notifications.py` (not imported anywhere).
+- Unused UI dependencies `@radix-ui/react-scroll-area`, `@radix-ui/react-select`,
+  `@radix-ui/react-slot` and the `notification-tray: file:..` self-dependency.
+
+### Changed
+- `resolveAnimationConfig` and `buildTransition` in `ui/src/lib/animations.ts`
+  are no longer exported (file-internal).
+- `config.py`: simplified bundled sound-file lookup.
+
 ## [v2.0.16] - 2026-10-01
 
 ### Fixed
@@ -38,3 +50,4 @@ history before this point.
 
 [v2.0.15]: https://github.com/Dazaike/notification-tray/compare/v2.0.14...v2.0.15
 [v2.0.16]: https://github.com/Dazaike/notification-tray/compare/v2.0.15...v2.0.16
+[v2.0.17]: https://github.com/Dazaike/notification-tray/compare/v2.0.16...v2.0.17
